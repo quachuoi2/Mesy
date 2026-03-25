@@ -1,0 +1,12 @@
+[Unit]
+Description=Mesy - Claude Code Memory Sync Daemon
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 %REPO_DIR%/sync.py
+Restart=on-failure
+RestartSec=10
+WorkingDirectory=%REPO_DIR%
+
+[Install]
+WantedBy=default.target
