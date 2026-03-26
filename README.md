@@ -84,7 +84,7 @@ That's it. Memory syncs automatically from that point.
 ## What `sync.py` Does
 
 - Watches for `.md` file changes (uses `watchdog` if installed, otherwise polls)
-- Debounces 5 seconds after the last change, then commits and pushes
+- Debounces then commits and pushes (only `global/` and `projects/` — code files require manual commits)
 - Pulls remote changes every 60 seconds
 - Auto-detects new Claude Code project memory directories:
   - **Mapped** (in `projects.conf`): adopted into the canonical directory and symlinked

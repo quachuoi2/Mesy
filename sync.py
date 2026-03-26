@@ -58,7 +58,7 @@ def commit_and_push() -> None:
     if not has_local_changes():
         return
 
-    git("add", "-A")
+    git("add", "global/", "projects/")
 
     # Check if there's anything staged after add
     result = git("diff", "--cached", "--quiet")

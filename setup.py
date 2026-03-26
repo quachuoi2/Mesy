@@ -362,7 +362,7 @@ def install_daemon() -> None:
 
 def git_push_migrated() -> None:
     """Commit and push any migrated files."""
-    subprocess.run(["git", "-C", str(REPO_DIR), "add", "-A"], check=False)
+    subprocess.run(["git", "-C", str(REPO_DIR), "add", "global/", "projects/"], check=False)
     result = subprocess.run(
         ["git", "-C", str(REPO_DIR), "diff", "--cached", "--quiet"],
         check=False,
