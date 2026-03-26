@@ -23,6 +23,7 @@ Mesy/
 │   └── MEMORY.md
 ├── projects/                      # Per-project memory (canonical names)
 │   ├── Workspace/                 # Canonical project name
+│   │   ├── CLAUDE.md              # Synced from ~/.claude/projects/<raw>/CLAUDE.md
 │   │   ├── MEMORY.md
 │   │   └── *.md
 │   └── .pending/                  # Unmapped projects staged here until mapped
@@ -72,8 +73,8 @@ That's it. Memory syncs automatically from that point.
 
 ## What `setup.py` Does
 
-1. Symlinks `~/.claude/memory/` → `Mesy/global/`
-2. Reads `projects.conf` and symlinks `~/.claude/projects/<raw-name>/memory/` → `Mesy/projects/<canonical>/`
+1. Symlinks `~/.claude/memory/` → `Mesy/global/` and `~/.claude/CLAUDE.md` → `Mesy/global/CLAUDE.md`
+2. Reads `projects.conf` and symlinks `~/.claude/projects/<raw-name>/memory/` and `CLAUDE.md` → `Mesy/projects/<canonical>/`
 3. Migrates existing raw-named repo directories to canonical names
 4. Migrates any existing local memory into the repo, conflict-merging differing files (nothing is lost)
 5. Stages unmapped projects in `projects/.pending/` with instructions
