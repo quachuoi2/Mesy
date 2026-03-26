@@ -31,7 +31,7 @@ log = logging.getLogger("mesy")
 
 def load_config() -> dict:
     defaults = {
-        "debounce_seconds": "5",
+        "debounce_seconds": "30",
         "pull_interval_seconds": "60",
         "scan_interval_seconds": "60",
     }
@@ -472,7 +472,7 @@ def run_with_watchdog(config: dict) -> None:
 
 def run_with_polling(config: dict) -> None:
     """Fallback: poll for changes using mtime comparison."""
-    poll_interval = max(float(config["debounce_seconds"]), 10)
+    poll_interval = max(float(config["debounce_seconds"]), 60)
     pull_interval = float(config["pull_interval_seconds"])
     scan_interval = float(config["scan_interval_seconds"])
 
