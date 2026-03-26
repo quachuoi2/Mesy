@@ -48,9 +48,14 @@ Mesy/
    git remote add origin git@github.com:<you>/Mesy.git
    git push -u origin main
    ```
-3. Run setup:
+3. Add your project mappings to `projects.conf`:
+   ```ini
+   [Workspace]
+   paths = -home-allyqch2-Workspace, -C-Users-allyqch2-Workspace
+   ```
+4. Run setup:
    ```bash
-   ./setup.sh
+   python3 setup.py
    ```
 
 ### Every additional server
@@ -58,7 +63,8 @@ Mesy/
 ```bash
 git clone git@github.com:<you>/Mesy.git ~/Workspace/Mesy
 cd ~/Workspace/Mesy
-./setup.sh
+# Add this system's raw path names to projects.conf if needed
+python3 setup.py
 ```
 
 That's it. Memory syncs automatically from that point.
