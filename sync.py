@@ -5,6 +5,7 @@ Watches ~/Workspace/Mesy/ for .md changes and syncs via git to a GitHub remote.
 Also detects new Claude Code project memory directories and symlinks them into the repo.
 """
 
+import filecmp
 import logging
 import os
 import shutil
@@ -117,8 +118,7 @@ def resolve_conflicts() -> None:
                 resolved.append(f"<!-- CONFLICT ({now}): local ({hostname}) version -->")
             elif line.startswith("=======") and in_conflict:
                 section = "theirs"
-                resolved.append("---")
-                resolved.append(f"<!-- CONFLICT ({now}): remote version -->")
+                resolved.append(f"\n<!-- CONFLICT ({now}): remote version -->")
             elif line.startswith(">>>>>>>") and in_conflict:
                 in_conflict = False
             else:
@@ -146,6 +146,44 @@ def pull_remote() -> None:
         log.debug("pull failed (offline?): %s", result.stderr)
 
 
+def _split_frontmatter(text: str) -> tuple[str, dict]:
+    """Split markdown into (body, frontmatter_dict)."""
+    if not text.startswith("---\n"):
+        return text, {}
+    parts = text.split("---\n", 2)
+    if len(parts) < 3:
+        return text, {}
+    fm = {}
+    for line in parts[1].strip().split("\n"):
+        if ": " in line:
+            key, val = line.split(": ", 1)
+            fm[key.strip()] = val.strip()
+    return parts[2], fm
+
+
+def _merge_conflicting_file(local: Path, repo: Path) -> None:
+    """Merge two differing files by keeping both versions with conflict markers."""
+    hostname = socket.gethostname()
+    now = datetime.now(timezone.utc).isoformat()
+
+    local_body, local_fm = _split_frontmatter(local.read_text())
+    repo_body, repo_fm = _split_frontmatter(repo.read_text())
+
+    merged_fm = {**repo_fm, **local_fm, "conflict": "true"}
+    fm_lines = "\n".join(f"{k}: {v}" for k, v in merged_fm.items())
+
+    merged = (
+        f"---\n{fm_lines}\n---\n\n"
+        f"<!-- CONFLICT ({now}): local ({hostname}) version -->\n"
+        f"{local_body.strip()}\n\n"
+        f"<!-- CONFLICT ({now}): repo version -->\n"
+        f"{repo_body.strip()}\n"
+    )
+
+    repo.write_text(merged)
+    log.info("Conflict-merged %s (both versions preserved)", repo.name)
+
+
 def scan_new_projects() -> None:
     """Find Claude Code project memory dirs that aren't symlinked and adopt them."""
     if not PROJECTS_DIR.exists():
@@ -165,11 +203,15 @@ def scan_new_projects() -> None:
         repo_project_dir = REPO_DIR / "projects" / project_name
 
         if repo_project_dir.exists():
-            # Merge: copy files that don't already exist in repo
+            # Merge: copy new files, conflict-merge differing files
             for f in memory_dir.iterdir():
+                if f.is_dir():
+                    continue
                 dest = repo_project_dir / f.name
                 if not dest.exists():
                     shutil.copy2(f, dest)
+                elif not filecmp.cmp(f, dest, shallow=False):
+                    _merge_conflicting_file(local=f, repo=dest)
         else:
             # Move entire directory into repo
             shutil.copytree(memory_dir, repo_project_dir)
