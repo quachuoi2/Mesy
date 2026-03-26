@@ -76,8 +76,11 @@ def _split_frontmatter(text: str) -> tuple[str, dict]:
 def make_file_symlink(link: Path, target: Path) -> None:
     """Create a symlink for a single file, migrating existing content if needed."""
     if link.is_symlink():
-        log("ok", f"Symlink already exists: {link.name}")
-        return
+        if link.resolve() == target.resolve():
+            log("ok", f"Symlink already exists: {link.name}")
+            return
+        log("relink", f"Updating symlink: {link.name} -> {target}")
+        link.unlink()
 
     if link.is_file():
         # Local file exists — migrate into repo
@@ -113,8 +116,11 @@ def make_file_symlink(link: Path, target: Path) -> None:
 def make_symlink(link: Path, target: Path) -> None:
     """Create a symlink for a directory, with Windows-compatible support."""
     if link.is_symlink():
-        log("ok", f"Symlink already exists: {link}")
-        return
+        if link.resolve() == target.resolve():
+            log("ok", f"Symlink already exists: {link}")
+            return
+        log("relink", f"Updating symlink: {link} -> {target}")
+        link.unlink()
 
     if link.is_dir():
         # Migrate existing memory into repo
