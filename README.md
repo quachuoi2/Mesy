@@ -69,21 +69,41 @@ python3 setup.py
 
 That's it. Memory syncs automatically from that point.
 
-## What `setup.sh` Does
+## What `setup.py` Does
 
 1. Symlinks `~/.claude/memory/` → `Mesy/global/`
-2. Symlinks `~/.claude/projects/*/memory/` → matching dirs in `Mesy/projects/`
-3. Migrates any existing local memory into the repo (nothing is lost)
-4. Installs and starts the systemd sync daemon
-5. Enables lingering so the daemon survives logout
+2. Reads `projects.conf` and symlinks `~/.claude/projects/<raw-name>/memory/` → `Mesy/projects/<canonical>/`
+3. Migrates existing raw-named repo directories to canonical names
+4. Migrates any existing local memory into the repo, conflict-merging differing files (nothing is lost)
+5. Stages unmapped projects in `projects/.pending/` with instructions
+6. Installs the sync daemon (systemd on Linux, Task Scheduler on Windows)
+7. Enables lingering so the daemon survives logout (Linux)
 
 ## What `sync.py` Does
 
 - Watches for `.md` file changes (uses `watchdog` if installed, otherwise polls)
 - Debounces 5 seconds after the last change, then commits and pushes
 - Pulls remote changes every 60 seconds
-- Auto-detects new Claude Code project memory directories and adopts them with symlinks
+- Auto-detects new Claude Code project memory directories:
+  - **Mapped** (in `projects.conf`): adopted into the canonical directory and symlinked
+  - **Unmapped**: staged in `projects/.pending/` with a `.needs_mapping` marker
+- Promotes pending projects when a mapping is added to `projects.conf`
 - On merge conflicts: keeps both versions and flags with `conflict: true` in frontmatter
+- On file migration conflicts (same filename, different content): merges both versions into one file with conflict markers
+
+## Project Name Mapping
+
+Claude Code encodes the working directory path into the memory folder name (e.g., `/home/user/Workspace` → `-home-user-Workspace`). Different systems produce different names for the same project. `projects.conf` maps them to a canonical name:
+
+```ini
+[Workspace]
+paths = -home-allyqch2-Workspace, -C-Users-allyqch2-Workspace
+
+[Alfred]
+paths = -home-allyqch2-Workspace-Alfred, -C-Users-allyqch2-Workspace-Alfred
+```
+
+When the daemon finds an unmapped project, it stages data in `.pending/` and logs a warning. Add the mapping and the next scan cycle promotes it automatically.
 
 ## Configuration
 
@@ -104,18 +124,21 @@ scan_interval_seconds = 60  # How often to scan for new projects
 
 ## Managing the Daemon
 
+### Linux (systemd)
+
 ```bash
-# Check status
-systemctl --user status claude-memory-sync
+systemctl --user status claude-memory-sync     # Check status
+systemctl --user restart claude-memory-sync    # Restart
+journalctl --user -u claude-memory-sync -f     # View logs
+systemctl --user stop claude-memory-sync       # Stop
+```
 
-# Restart
-systemctl --user restart claude-memory-sync
+### Windows (Task Scheduler)
 
-# View logs
-journalctl --user -u claude-memory-sync -f
-
-# Stop
-systemctl --user stop claude-memory-sync
+```powershell
+schtasks /Query /TN MesyClaudeMemorySync       # Check status
+schtasks /Run /TN MesyClaudeMemorySync          # Start
+schtasks /End /TN MesyClaudeMemorySync          # Stop
 ```
 
 ## Dual-Boot / WSL
