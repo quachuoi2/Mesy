@@ -240,6 +240,30 @@ def _migrate_memory_to_dir(memory_dir: Path, target_dir: Path) -> None:
             _merge_conflicting_file(local=f, repo=dest)
 
 
+def _sync_claude_md(project_dir: Path, repo_dir: Path) -> None:
+    """Migrate and symlink a project's CLAUDE.md file."""
+    local_claude = project_dir / "CLAUDE.md"
+    repo_claude = repo_dir / "CLAUDE.md"
+
+    if local_claude.is_symlink():
+        return  # already set up
+
+    if local_claude.is_file():
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        if not repo_claude.exists():
+            shutil.copy2(local_claude, repo_claude)
+            log.info("Copied CLAUDE.md for %s into repo", project_dir.name)
+        elif not filecmp.cmp(local_claude, repo_claude, shallow=False):
+            _merge_conflicting_file(local=local_claude, repo=repo_claude)
+        local_claude.unlink()
+        local_claude.symlink_to(repo_claude)
+        log.info("Symlinked CLAUDE.md for %s", project_dir.name)
+    elif repo_claude.exists():
+        # Repo has it but local doesn't — create symlink
+        local_claude.symlink_to(repo_claude)
+        log.info("Symlinked CLAUDE.md for %s (from repo)", project_dir.name)
+
+
 def _promote_pending(mapping: dict[str, str]) -> None:
     """Move pending projects to canonical dirs when a mapping is added."""
     if not PENDING_DIR.exists():
@@ -281,8 +305,32 @@ def _promote_pending(mapping: dict[str, str]) -> None:
         PENDING_DIR.rmdir()
 
 
+def _sync_global_claude_md() -> None:
+    """Migrate and symlink the global ~/.claude/CLAUDE.md."""
+    local_claude = CLAUDE_DIR / "CLAUDE.md"
+    repo_claude = REPO_DIR / "global" / "CLAUDE.md"
+
+    if local_claude.is_symlink():
+        return
+
+    if local_claude.is_file():
+        if not repo_claude.exists():
+            shutil.copy2(local_claude, repo_claude)
+            log.info("Copied global CLAUDE.md into repo")
+        elif not filecmp.cmp(local_claude, repo_claude, shallow=False):
+            _merge_conflicting_file(local=local_claude, repo=repo_claude)
+        local_claude.unlink()
+        local_claude.symlink_to(repo_claude)
+        log.info("Symlinked global CLAUDE.md")
+    elif repo_claude.exists() and not local_claude.exists():
+        local_claude.symlink_to(repo_claude)
+        log.info("Symlinked global CLAUDE.md (from repo)")
+
+
 def scan_new_projects() -> None:
     """Find Claude Code project memory dirs that aren't symlinked and adopt them."""
+    _sync_global_claude_md()
+
     if not PROJECTS_DIR.exists():
         return
 
@@ -301,6 +349,11 @@ def scan_new_projects() -> None:
         if not memory_dir.exists():
             continue
         if memory_dir.is_symlink():
+            # Memory already linked — but check if CLAUDE.md needs syncing
+            raw_name = project_dir.name
+            if raw_name in mapping:
+                canonical_dir = REPO_DIR / "projects" / mapping[raw_name]
+                _sync_claude_md(project_dir, canonical_dir)
             continue
 
         raw_name = project_dir.name
@@ -315,6 +368,9 @@ def scan_new_projects() -> None:
             shutil.rmtree(memory_dir)
             memory_dir.symlink_to(canonical_dir)
             log.info("Adopted project memory: %s -> %s", raw_name, canonical)
+
+            # Also sync CLAUDE.md for this project
+            _sync_claude_md(project_dir, canonical_dir)
 
         else:
             # Unmapped — stage in .pending, preserve data, warn user

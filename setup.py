@@ -73,8 +73,45 @@ def _split_frontmatter(text: str) -> tuple[str, dict]:
     return parts[2], fm
 
 
+def make_file_symlink(link: Path, target: Path) -> None:
+    """Create a symlink for a single file, migrating existing content if needed."""
+    if link.is_symlink():
+        log("ok", f"Symlink already exists: {link.name}")
+        return
+
+    if link.is_file():
+        # Local file exists — migrate into repo
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            shutil.copy2(link, target)
+            log("migrate", f"Copied {link.name} into repo")
+        elif not filecmp.cmp(link, target, shallow=False):
+            merge_conflicting_file(local=link, repo=target)
+        else:
+            log("ok", f"{link.name} identical, skipping")
+        link.unlink()
+    elif not target.exists():
+        # Neither local nor repo has it — nothing to do
+        return
+
+    link.parent.mkdir(parents=True, exist_ok=True)
+
+    if IS_WINDOWS:
+        try:
+            os.symlink(target, link)
+            log("ok", f"Symlinked {link.name}")
+        except OSError:
+            # Windows file symlinks also need Developer Mode
+            # Fall back to copying (junctions only work for dirs)
+            shutil.copy2(target, link)
+            log("warn", f"Symlink failed for {link.name}, copied instead (edits won't sync back!)")
+    else:
+        os.symlink(target, link)
+        log("ok", f"Symlinked {link.name}")
+
+
 def make_symlink(link: Path, target: Path) -> None:
-    """Create a symlink, with Windows-compatible directory symlink support."""
+    """Create a symlink for a directory, with Windows-compatible support."""
     if link.is_symlink():
         log("ok", f"Symlink already exists: {link}")
         return
@@ -163,9 +200,12 @@ def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
 
 
 def setup_symlinks() -> None:
-    """Symlink global and project memories."""
-    # Global memory
+    """Symlink global and project memories, plus CLAUDE.md files."""
+    # Global memory directory
     make_symlink(CLAUDE_DIR / "memory", REPO_DIR / "global")
+
+    # Global CLAUDE.md
+    make_file_symlink(CLAUDE_DIR / "CLAUDE.md", REPO_DIR / "global" / "CLAUDE.md")
 
     mapping = load_project_mappings()
 
@@ -188,6 +228,11 @@ def setup_symlinks() -> None:
                 canonical = mapping[raw_name]
                 canonical_dir = REPO_DIR / "projects" / canonical
                 make_symlink(memory_path, canonical_dir)
+                # Project CLAUDE.md
+                make_file_symlink(
+                    project_dir / "CLAUDE.md",
+                    canonical_dir / "CLAUDE.md",
+                )
             elif memory_path.is_dir():
                 # Unmapped — stage in .pending
                 pending_dir = REPO_DIR / "projects" / ".pending" / raw_name
@@ -222,6 +267,11 @@ def setup_symlinks() -> None:
         if canonical_dir.exists():
             claude_project_dir.mkdir(parents=True, exist_ok=True)
             make_symlink(memory_path, canonical_dir)
+            # Pre-link CLAUDE.md if it exists in repo
+            make_file_symlink(
+                claude_project_dir / "CLAUDE.md",
+                canonical_dir / "CLAUDE.md",
+            )
             log("ok", f"Pre-linked {raw_name} -> {canonical}")
 
 
