@@ -12,11 +12,13 @@ import shutil
 import socket
 import subprocess
 import sys
+from configparser import ConfigParser
 from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parent
 IS_WINDOWS = platform.system() == "Windows"
+PROJECTS_CONF_PATH = REPO_DIR / "projects.conf"
 
 if IS_WINDOWS:
     CLAUDE_DIR = Path(os.environ["USERPROFILE"]) / ".claude"
@@ -118,22 +120,109 @@ def make_symlink(link: Path, target: Path) -> None:
         log("ok", f"Symlinked {link.name}")
 
 
+def load_project_mappings() -> dict[str, str]:
+    """Load projects.conf and return {raw_claude_name: canonical_name} mapping."""
+    mapping = {}
+    if not PROJECTS_CONF_PATH.exists():
+        return mapping
+    cfg = ConfigParser()
+    cfg.read(PROJECTS_CONF_PATH)
+    for section in cfg.sections():
+        canonical = section
+        paths_str = cfg.get(section, "paths", fallback="")
+        for raw_name in paths_str.split(","):
+            raw_name = raw_name.strip()
+            if raw_name:
+                mapping[raw_name] = canonical
+    return mapping
+
+
+def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
+    """Rename raw-named project dirs in the repo to their canonical names."""
+    projects_dir = REPO_DIR / "projects"
+    if not projects_dir.exists():
+        return
+
+    # Build reverse: canonical -> list of raw names
+    canonical_raws: dict[str, list[str]] = {}
+    for raw, canonical in mapping.items():
+        canonical_raws.setdefault(canonical, []).append(raw)
+
+    for canonical, raw_names in canonical_raws.items():
+        canonical_dir = projects_dir / canonical
+        if canonical_dir.exists():
+            continue  # already migrated
+
+        # Check if any raw-named directory exists in repo
+        for raw_name in raw_names:
+            raw_dir = projects_dir / raw_name
+            if raw_dir.exists() and raw_dir.is_dir():
+                raw_dir.rename(canonical_dir)
+                log("migrate", f"Renamed repo dir: {raw_name} -> {canonical}")
+                break
+
+
 def setup_symlinks() -> None:
     """Symlink global and project memories."""
     # Global memory
     make_symlink(CLAUDE_DIR / "memory", REPO_DIR / "global")
 
-    # Project memories
-    projects_in_repo = REPO_DIR / "projects"
-    if not projects_in_repo.exists():
-        return
+    mapping = load_project_mappings()
 
-    for project_dir in projects_in_repo.iterdir():
-        if not project_dir.is_dir():
-            continue
-        claude_project_dir = CLAUDE_DIR / "projects" / project_dir.name
-        claude_project_dir.mkdir(parents=True, exist_ok=True)
-        make_symlink(claude_project_dir / "memory", project_dir)
+    # Rename any raw-named dirs in repo to canonical names
+    migrate_repo_to_canonical(mapping)
+
+    # Symlink mapped projects: Claude's raw name -> canonical repo dir
+    claude_projects_dir = CLAUDE_DIR / "projects"
+    if claude_projects_dir.exists():
+        for project_dir in claude_projects_dir.iterdir():
+            if not project_dir.is_dir():
+                continue
+            raw_name = project_dir.name
+            memory_path = project_dir / "memory"
+
+            if memory_path.is_symlink():
+                continue  # already set up
+
+            if raw_name in mapping:
+                canonical = mapping[raw_name]
+                canonical_dir = REPO_DIR / "projects" / canonical
+                make_symlink(memory_path, canonical_dir)
+            elif memory_path.is_dir():
+                # Unmapped — stage in .pending
+                pending_dir = REPO_DIR / "projects" / ".pending" / raw_name
+                pending_dir.mkdir(parents=True, exist_ok=True)
+                make_symlink(memory_path, pending_dir)
+                # Write marker
+                marker = pending_dir / ".needs_mapping"
+                if not marker.exists():
+                    hostname = socket.gethostname()
+                    now = datetime.now(timezone.utc).isoformat()
+                    marker.write_text(
+                        f"source: {hostname}\n"
+                        f"discovered: {now}\n"
+                        f"raw_name: {raw_name}\n"
+                        f"\n"
+                        f"Add a mapping in projects.conf:\n"
+                        f"  [YourProjectName]\n"
+                        f"  paths = {raw_name}\n"
+                    )
+                log("pending", f"{raw_name} has no mapping — staged in .pending/")
+                log("info", f"  Add to projects.conf: [YourProjectName] / paths = {raw_name}")
+
+    # Also symlink for mapped raw names that exist in projects.conf
+    # but whose Claude project dirs may not exist yet on this system
+    # (they'll be created when Claude is used in that directory)
+    for raw_name, canonical in mapping.items():
+        claude_project_dir = claude_projects_dir / raw_name
+        memory_path = claude_project_dir / "memory"
+        if memory_path.exists():
+            continue  # already handled above
+        canonical_dir = REPO_DIR / "projects" / canonical
+        if canonical_dir.exists():
+            claude_project_dir.mkdir(parents=True, exist_ok=True)
+            make_symlink(memory_path, canonical_dir)
+            log("ok", f"Pre-linked {raw_name} -> {canonical}")
 
 
 def install_systemd_service() -> None:

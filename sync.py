@@ -21,6 +21,8 @@ REPO_DIR = Path(__file__).resolve().parent
 CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 CONFIG_PATH = REPO_DIR / "sync.conf"
+PROJECTS_CONF_PATH = REPO_DIR / "projects.conf"
+PENDING_DIR = REPO_DIR / "projects" / ".pending"
 
 LOG_FMT = "%(asctime)s [%(levelname)s] %(message)s"
 logging.basicConfig(level=logging.INFO, format=LOG_FMT)
@@ -146,6 +148,25 @@ def pull_remote() -> None:
         log.debug("pull failed (offline?): %s", result.stderr)
 
 
+def load_project_mappings() -> dict[str, str]:
+    """Load projects.conf and return {raw_claude_name: canonical_name} mapping."""
+    mapping = {}
+    if not PROJECTS_CONF_PATH.exists():
+        return mapping
+    cfg = ConfigParser()
+    cfg.read(PROJECTS_CONF_PATH)
+    for section in cfg.sections():
+        if section == "mesy":
+            continue
+        canonical = section
+        paths_str = cfg.get(section, "paths", fallback="")
+        for raw_name in paths_str.split(","):
+            raw_name = raw_name.strip()
+            if raw_name:
+                mapping[raw_name] = canonical
+    return mapping
+
+
 def _split_frontmatter(text: str) -> tuple[str, dict]:
     """Split markdown into (body, frontmatter_dict)."""
     if not text.startswith("---\n"):
@@ -184,10 +205,94 @@ def _merge_conflicting_file(local: Path, repo: Path) -> None:
     log.info("Conflict-merged %s (both versions preserved)", repo.name)
 
 
+def _migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
+    """Rename raw-named project dirs in the repo to their canonical names."""
+    projects_dir = REPO_DIR / "projects"
+    if not projects_dir.exists():
+        return
+
+    canonical_raws: dict[str, list[str]] = {}
+    for raw, canonical in mapping.items():
+        canonical_raws.setdefault(canonical, []).append(raw)
+
+    for canonical, raw_names in canonical_raws.items():
+        canonical_dir = projects_dir / canonical
+        if canonical_dir.exists():
+            continue
+        for raw_name in raw_names:
+            raw_dir = projects_dir / raw_name
+            if raw_dir.exists() and raw_dir.is_dir():
+                raw_dir.rename(canonical_dir)
+                log.info("Renamed repo dir: %s -> %s", raw_name, canonical)
+                break
+
+
+def _migrate_memory_to_dir(memory_dir: Path, target_dir: Path) -> None:
+    """Copy/merge files from a memory directory into a target repo directory."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for f in memory_dir.iterdir():
+        if f.is_dir():
+            continue
+        dest = target_dir / f.name
+        if not dest.exists():
+            shutil.copy2(f, dest)
+        elif not filecmp.cmp(f, dest, shallow=False):
+            _merge_conflicting_file(local=f, repo=dest)
+
+
+def _promote_pending(mapping: dict[str, str]) -> None:
+    """Move pending projects to canonical dirs when a mapping is added."""
+    if not PENDING_DIR.exists():
+        return
+
+    for pending_dir in list(PENDING_DIR.iterdir()):
+        if not pending_dir.is_dir():
+            continue
+        raw_name = pending_dir.name
+        if raw_name not in mapping:
+            continue
+
+        canonical = mapping[raw_name]
+        canonical_dir = REPO_DIR / "projects" / canonical
+        canonical_dir.mkdir(parents=True, exist_ok=True)
+
+        # Merge files into canonical directory
+        for f in pending_dir.iterdir():
+            if f.name == ".needs_mapping" or f.is_dir():
+                continue
+            dest = canonical_dir / f.name
+            if not dest.exists():
+                shutil.copy2(f, dest)
+            elif not filecmp.cmp(f, dest, shallow=False):
+                _merge_conflicting_file(local=f, repo=dest)
+
+        shutil.rmtree(pending_dir)
+        log.info("Promoted pending project %s -> %s", raw_name, canonical)
+
+        # Symlink if the Claude project dir exists on this system
+        claude_memory = PROJECTS_DIR / raw_name / "memory"
+        if claude_memory.exists() and not claude_memory.is_symlink():
+            shutil.rmtree(claude_memory)
+            claude_memory.symlink_to(canonical_dir)
+            log.info("Symlinked %s -> %s", raw_name, canonical)
+
+    # Clean up .pending if empty
+    if PENDING_DIR.exists() and not any(PENDING_DIR.iterdir()):
+        PENDING_DIR.rmdir()
+
+
 def scan_new_projects() -> None:
     """Find Claude Code project memory dirs that aren't symlinked and adopt them."""
     if not PROJECTS_DIR.exists():
         return
+
+    mapping = load_project_mappings()
+
+    # Rename any raw-named dirs in repo to canonical names
+    _migrate_repo_to_canonical(mapping)
+
+    # Promote any pending projects that now have mappings
+    _promote_pending(mapping)
 
     for project_dir in PROJECTS_DIR.iterdir():
         if not project_dir.is_dir():
@@ -198,28 +303,48 @@ def scan_new_projects() -> None:
         if memory_dir.is_symlink():
             continue
 
-        # Real directory — adopt it into the repo
-        project_name = project_dir.name
-        repo_project_dir = REPO_DIR / "projects" / project_name
+        raw_name = project_dir.name
 
-        if repo_project_dir.exists():
-            # Merge: copy new files, conflict-merge differing files
-            for f in memory_dir.iterdir():
-                if f.is_dir():
-                    continue
-                dest = repo_project_dir / f.name
-                if not dest.exists():
-                    shutil.copy2(f, dest)
-                elif not filecmp.cmp(f, dest, shallow=False):
-                    _merge_conflicting_file(local=f, repo=dest)
+        if raw_name in mapping:
+            # Mapped — adopt into canonical directory
+            canonical = mapping[raw_name]
+            canonical_dir = REPO_DIR / "projects" / canonical
+            _migrate_memory_to_dir(memory_dir, canonical_dir)
+
+            # Replace with symlink to canonical dir
+            shutil.rmtree(memory_dir)
+            memory_dir.symlink_to(canonical_dir)
+            log.info("Adopted project memory: %s -> %s", raw_name, canonical)
+
         else:
-            # Move entire directory into repo
-            shutil.copytree(memory_dir, repo_project_dir)
+            # Unmapped — stage in .pending, preserve data, warn user
+            pending_dest = PENDING_DIR / raw_name
+            if not pending_dest.exists():
+                PENDING_DIR.mkdir(parents=True, exist_ok=True)
+                _migrate_memory_to_dir(memory_dir, pending_dest)
 
-        # Replace with symlink
-        shutil.rmtree(memory_dir)
-        memory_dir.symlink_to(repo_project_dir)
-        log.info("Adopted new project memory: %s", project_name)
+                # Write marker file
+                hostname = socket.gethostname()
+                now = datetime.now(timezone.utc).isoformat()
+                marker = pending_dest / ".needs_mapping"
+                marker.write_text(
+                    f"source: {hostname}\n"
+                    f"discovered: {now}\n"
+                    f"raw_name: {raw_name}\n"
+                    f"\n"
+                    f"Add a mapping in projects.conf:\n"
+                    f"  [YourProjectName]\n"
+                    f"  paths = {raw_name}\n"
+                )
+
+                # Replace with symlink to pending so data isn't lost
+                shutil.rmtree(memory_dir)
+                memory_dir.symlink_to(pending_dest)
+                log.warning(
+                    "Unmapped project memory: %s — staged in .pending/. "
+                    "Add a mapping in projects.conf to assign a canonical name.",
+                    raw_name,
+                )
 
 
 def get_md_mtimes() -> dict[str, float]:

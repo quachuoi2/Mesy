@@ -20,12 +20,17 @@ Server A                       GitHub (private repo)                Server B
 Mesy/
 ├── global/                        # User-level memory (shared across all projects)
 │   └── MEMORY.md
-├── projects/                      # Per-project memory (Claude Code's encoded paths)
-│   └── -home-user-Workspace/
-│       ├── MEMORY.md
-│       └── *.md
+├── projects/                      # Per-project memory (canonical names)
+│   ├── Workspace/                 # Canonical project name
+│   │   ├── MEMORY.md
+│   │   └── *.md
+│   └── .pending/                  # Unmapped projects staged here until mapped
+│       └── -some-raw-name/
+│           ├── .needs_mapping     # Marker with instructions
+│           └── *.md
 ├── sync.py                        # Sync daemon
-├── setup.sh                       # New server onboarding
+├── setup.py                       # Cross-platform onboarding (Linux/Windows/WSL)
+├── projects.conf                  # Canonical project name mappings
 ├── claude-memory-sync.service     # Systemd unit template
 ├── sync.conf                      # Config (intervals)
 └── DUAL_BOOT_SETUP.md            # Notes for dual-boot / WSL environments
