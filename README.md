@@ -4,7 +4,7 @@ A seamless Memory Sync mechanism across all your servers. One continuous memory,
 
 ## How It Works
 
-Claude Code stores memory as markdown files under `~/.claude/`. Mesy is a git repo that holds all your memory centrally. Symlinks connect Claude Code's expected paths into this repo, and a background daemon auto-commits and pushes/pulls via GitHub.
+Claude Code stores memory and instructions as files under `~/.claude/`. Mesy is a git repo that holds all your memory and `CLAUDE.md` files centrally. Symlinks connect Claude Code's expected paths into this repo, and a background daemon auto-commits and pushes/pulls via GitHub.
 
 ```
 Server A                       GitHub (private repo)                Server B
@@ -18,7 +18,8 @@ Server A                       GitHub (private repo)                Server B
 
 ```
 Mesy/
-├── global/                        # User-level memory (shared across all projects)
+├── global/                        # User-level memory + global CLAUDE.md
+│   ├── CLAUDE.md                  # Synced from ~/.claude/CLAUDE.md
 │   └── MEMORY.md
 ├── projects/                      # Per-project memory (canonical names)
 │   ├── Workspace/                 # Canonical project name
