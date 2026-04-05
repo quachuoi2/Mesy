@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mesy — Claude Code memory sync setup (cross-platform).
+"""Mesy — Multi-target memory sync setup (cross-platform).
 
 Run from inside the cloned Mesy repo on any new system:
     python setup.py
@@ -38,11 +38,9 @@ def merge_conflicting_file(local: Path, repo: Path) -> None:
     local_content = local.read_text()
     repo_content = repo.read_text()
 
-    # Strip existing frontmatter from both to merge cleanly
     local_body, local_fm = _split_frontmatter(local_content)
     repo_body, repo_fm = _split_frontmatter(repo_content)
 
-    # Merge frontmatter keys (repo as base, local overrides, add conflict flag)
     merged_fm = {**repo_fm, **local_fm, "conflict": "true"}
     fm_lines = "\n".join(f"{k}: {v}" for k, v in merged_fm.items())
 
@@ -59,7 +57,7 @@ def merge_conflicting_file(local: Path, repo: Path) -> None:
 
 
 def _split_frontmatter(text: str) -> tuple[str, dict]:
-    """Split markdown into (body, frontmatter_dict). Returns ({}, body) if no frontmatter."""
+    """Split markdown into (body, frontmatter_dict)."""
     if not text.startswith("---\n"):
         return text, {}
     parts = text.split("---\n", 2)
@@ -83,7 +81,6 @@ def make_file_symlink(link: Path, target: Path) -> None:
         link.unlink()
 
     if link.is_file():
-        # Local file exists — migrate into repo
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
             shutil.copy2(link, target)
@@ -94,7 +91,6 @@ def make_file_symlink(link: Path, target: Path) -> None:
             log("ok", f"{link.name} identical, skipping")
         link.unlink()
     elif not target.exists():
-        # Neither local nor repo has it — nothing to do
         return
 
     link.parent.mkdir(parents=True, exist_ok=True)
@@ -104,8 +100,6 @@ def make_file_symlink(link: Path, target: Path) -> None:
             os.symlink(target, link)
             log("ok", f"Symlinked {link.name}")
         except OSError:
-            # Windows file symlinks also need Developer Mode
-            # Fall back to copying (junctions only work for dirs)
             shutil.copy2(target, link)
             log("warn", f"Symlink failed for {link.name}, copied instead (edits won't sync back!)")
     else:
@@ -123,19 +117,16 @@ def make_symlink(link: Path, target: Path) -> None:
         link.unlink()
 
     if link.is_dir():
-        # Migrate existing memory into repo
         log("migrate", f"Moving existing memory from {link}")
         target.mkdir(parents=True, exist_ok=True)
         for f in link.iterdir():
             if f.is_dir():
-                continue  # skip subdirectories within memory
+                continue
             dest = target / f.name
             if not dest.exists():
-                # New file — just copy it
                 shutil.copy2(f, dest)
                 log("migrate", f"  copied {f.name}")
             elif not filecmp.cmp(f, dest, shallow=False):
-                # Both exist with different content — merge with conflict markers
                 merge_conflicting_file(local=f, repo=dest)
             else:
                 log("ok", f"  {f.name} identical, skipping")
@@ -145,8 +136,6 @@ def make_symlink(link: Path, target: Path) -> None:
     target.mkdir(parents=True, exist_ok=True)
 
     if IS_WINDOWS:
-        # os.symlink works on Windows with developer mode enabled or admin
-        # Fall back to junction if symlink fails
         try:
             os.symlink(target, link, target_is_directory=True)
             log("ok", f"Symlinked {link.name}")
@@ -186,7 +175,6 @@ def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
     if not projects_dir.exists():
         return
 
-    # Build reverse: canonical -> list of raw names
     canonical_raws: dict[str, list[str]] = {}
     for raw, canonical in mapping.items():
         canonical_raws.setdefault(canonical, []).append(raw)
@@ -194,9 +182,7 @@ def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
     for canonical, raw_names in canonical_raws.items():
         canonical_dir = projects_dir / canonical
         if canonical_dir.exists():
-            continue  # already migrated
-
-        # Check if any raw-named directory exists in repo
+            continue
         for raw_name in raw_names:
             raw_dir = projects_dir / raw_name
             if raw_dir.exists() and raw_dir.is_dir():
@@ -205,20 +191,14 @@ def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
                 break
 
 
-def setup_symlinks() -> None:
+def setup_claude_code_symlinks() -> None:
     """Symlink global and project memories, plus CLAUDE.md files."""
-    # Global memory directory
     make_symlink(CLAUDE_DIR / "memory", REPO_DIR / "global")
-
-    # Global CLAUDE.md
     make_file_symlink(CLAUDE_DIR / "CLAUDE.md", REPO_DIR / "global" / "CLAUDE.md")
 
     mapping = load_project_mappings()
-
-    # Rename any raw-named dirs in repo to canonical names
     migrate_repo_to_canonical(mapping)
 
-    # Symlink mapped projects: Claude's raw name -> canonical repo dir
     claude_projects_dir = CLAUDE_DIR / "projects"
     if claude_projects_dir.exists():
         for project_dir in claude_projects_dir.iterdir():
@@ -228,23 +208,20 @@ def setup_symlinks() -> None:
             memory_path = project_dir / "memory"
 
             if memory_path.is_symlink():
-                continue  # already set up
+                continue
 
             if raw_name in mapping:
                 canonical = mapping[raw_name]
                 canonical_dir = REPO_DIR / "projects" / canonical
                 make_symlink(memory_path, canonical_dir)
-                # Project CLAUDE.md
                 make_file_symlink(
                     project_dir / "CLAUDE.md",
                     canonical_dir / "CLAUDE.md",
                 )
             elif memory_path.is_dir():
-                # Unmapped — stage in .pending
                 pending_dir = REPO_DIR / "projects" / ".pending" / raw_name
                 pending_dir.mkdir(parents=True, exist_ok=True)
                 make_symlink(memory_path, pending_dir)
-                # Write marker
                 marker = pending_dir / ".needs_mapping"
                 if not marker.exists():
                     hostname = socket.gethostname()
@@ -261,24 +238,132 @@ def setup_symlinks() -> None:
                 log("pending", f"{raw_name} has no mapping — staged in .pending/")
                 log("info", f"  Add to projects.conf: [YourProjectName] / paths = {raw_name}")
 
-    # Also symlink for mapped raw names that exist in projects.conf
-    # but whose Claude project dirs may not exist yet on this system
-    # (they'll be created when Claude is used in that directory)
     for raw_name, canonical in mapping.items():
         claude_project_dir = claude_projects_dir / raw_name
         memory_path = claude_project_dir / "memory"
         if memory_path.exists():
-            continue  # already handled above
+            continue
         canonical_dir = REPO_DIR / "projects" / canonical
         if canonical_dir.exists():
             claude_project_dir.mkdir(parents=True, exist_ok=True)
             make_symlink(memory_path, canonical_dir)
-            # Pre-link CLAUDE.md if it exists in repo
             make_file_symlink(
                 claude_project_dir / "CLAUDE.md",
                 canonical_dir / "CLAUDE.md",
             )
             log("ok", f"Pre-linked {raw_name} -> {canonical}")
+
+
+def setup_generic_target(name: str, source: Path, repo_subdir: str,
+                         file_patterns: list[str], exclude: list[str]) -> None:
+    """Set up a generic sync target: copy files into repo, replace with symlinks."""
+    import fnmatch
+
+    repo_dir = REPO_DIR / repo_subdir
+
+    if not source.exists():
+        log("skip", f"[{name}] Source {source} does not exist")
+        return
+
+    log("info", f"[{name}] Setting up: {source} -> {repo_dir}")
+    repo_dir.mkdir(parents=True, exist_ok=True)
+
+    def should_exclude(item_name: str) -> bool:
+        for pattern in exclude:
+            if fnmatch.fnmatch(item_name, pattern.rstrip("/")):
+                return True
+        return False
+
+    def adopt_dir(src: Path, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+        for item in sorted(src.iterdir()):
+            if should_exclude(item.name):
+                log("skip", f"  [{name}] Excluded: {item.name}")
+                continue
+            if item.is_symlink():
+                continue
+            if item.is_dir():
+                adopt_dir(item, dest / item.name)
+                continue
+            if not any(fnmatch.fnmatch(item.name, pat) for pat in file_patterns):
+                continue
+
+            repo_file = dest / item.name
+            if not repo_file.exists():
+                shutil.copy2(item, repo_file)
+                log("migrate", f"  [{name}] Copied {item.name}")
+            elif not filecmp.cmp(item, repo_file, shallow=False):
+                merge_conflicting_file(local=item, repo=repo_file)
+            else:
+                log("ok", f"  [{name}] {item.name} identical")
+
+            item.unlink()
+            if IS_WINDOWS:
+                try:
+                    os.symlink(repo_file, item)
+                    log("ok", f"  [{name}] Symlinked {item.name}")
+                except OSError:
+                    shutil.copy2(repo_file, item)
+                    log("warn", f"  [{name}] Symlink failed for {item.name}, copied instead")
+            else:
+                os.symlink(repo_file, item)
+                log("ok", f"  [{name}] Symlinked {item.name}")
+
+        # Symlink repo files not in source (from other devices)
+        for repo_file in sorted(dest.iterdir()):
+            if repo_file.is_dir():
+                src_sub = src / repo_file.name
+                if not src_sub.exists():
+                    src_sub.mkdir(parents=True, exist_ok=True)
+                if not src_sub.is_symlink():
+                    adopt_dir(src_sub, repo_file)
+                continue
+            if not any(fnmatch.fnmatch(repo_file.name, pat) for pat in file_patterns):
+                continue
+            src_file = src / repo_file.name
+            if not src_file.exists():
+                os.symlink(repo_file, src_file)
+                log("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
+
+    adopt_dir(source, repo_dir)
+
+
+def load_sync_conf_targets() -> list[dict]:
+    """Load target definitions from sync.conf."""
+    config_path = REPO_DIR / "sync.conf"
+    if not config_path.exists():
+        return []
+
+    cfg = ConfigParser()
+    cfg.read(config_path)
+
+    targets = []
+    for section in cfg.sections():
+        if not section.startswith("target:"):
+            continue
+        name = section.split(":", 1)[1]
+        tdef = {"name": name}
+        tdef["source"] = Path(cfg.get(section, "source")).expanduser()
+        tdef["repo_subdir"] = cfg.get(section, "repo_subdir")
+
+        if cfg.has_option(section, "mapping_conf"):
+            tdef["type"] = "claude-code"
+        else:
+            tdef["type"] = "generic"
+
+        if cfg.has_option(section, "file_patterns"):
+            tdef["file_patterns"] = [p.strip() for p in cfg.get(section, "file_patterns").split(",")]
+        else:
+            tdef["file_patterns"] = ["*.md"]
+
+        if cfg.has_option(section, "exclude"):
+            tdef["exclude"] = [e.strip() for e in cfg.get(section, "exclude").split(",")]
+        else:
+            tdef["exclude"] = []
+
+        targets.append(tdef)
+
+    return targets
 
 
 def install_systemd_service() -> None:
@@ -301,7 +386,6 @@ def install_systemd_service() -> None:
     )
     log("ok", "Systemd service installed and started")
 
-    # Enable lingering so service runs after logout
     result = subprocess.run(
         ["loginctl", "enable-linger", os.environ.get("USER", "")],
         capture_output=True,
@@ -316,14 +400,12 @@ def install_task_scheduler(python_exe: str) -> None:
     task_name = "MesyClaudeMemorySync"
     sync_script = REPO_DIR / "sync.py"
 
-    # Delete existing task if present
     subprocess.run(
         ["schtasks", "/Delete", "/TN", task_name, "/F"],
         capture_output=True,
         check=False,
     )
 
-    # Create task that runs at logon and restarts on failure
     result = subprocess.run(
         [
             "schtasks",
@@ -345,7 +427,6 @@ def install_task_scheduler(python_exe: str) -> None:
 
     if result.returncode == 0:
         log("ok", "Task Scheduler task created (runs at logon)")
-        # Start the task now
         subprocess.run(
             ["schtasks", "/Run", "/TN", task_name],
             capture_output=True,
@@ -360,22 +441,19 @@ def install_task_scheduler(python_exe: str) -> None:
 def install_daemon() -> None:
     """Install the appropriate background daemon for this platform."""
     if IS_WINDOWS:
-        python_exe = sys.executable
-        install_task_scheduler(python_exe)
+        install_task_scheduler(sys.executable)
     else:
         install_systemd_service()
 
 
-def git_push_migrated() -> None:
+def git_push_migrated(stage_dirs: list[str]) -> None:
     """Commit and push any migrated files."""
-    subprocess.run(["git", "-C", str(REPO_DIR), "add", "global/", "projects/"], check=False)
+    subprocess.run(["git", "-C", str(REPO_DIR), "add"] + stage_dirs, check=False)
     result = subprocess.run(
         ["git", "-C", str(REPO_DIR), "diff", "--cached", "--quiet"],
         check=False,
     )
     if result.returncode != 0:
-        import socket
-
         hostname = socket.gethostname()
         subprocess.run(
             [
@@ -398,7 +476,7 @@ def git_push_migrated() -> None:
 
 
 def main() -> None:
-    print("=== Mesy: Claude Memory Sync Setup ===")
+    print("=== Mesy: Multi-Target Memory Sync Setup ===")
     print(f"Platform: {platform.system()}")
     print(f"Repo:     {REPO_DIR}")
     print(f"Claude:   {CLAUDE_DIR}")
@@ -406,9 +484,34 @@ def main() -> None:
 
     CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
 
-    setup_symlinks()
+    # Load targets from sync.conf
+    target_defs = load_sync_conf_targets()
+    stage_dirs = ["global/", "projects/"]
+
+    # Setup Claude Code target (always runs)
+    print("--- Claude Code ---")
+    setup_claude_code_symlinks()
+
+    # Setup generic targets from config
+    for tdef in target_defs:
+        if tdef["type"] == "generic":
+            print(f"\n--- {tdef['name']} ---")
+            setup_generic_target(
+                name=tdef["name"],
+                source=tdef["source"],
+                repo_subdir=tdef["repo_subdir"],
+                file_patterns=tdef["file_patterns"],
+                exclude=tdef["exclude"],
+            )
+            # Add this target's repo subdir to stage dirs
+            subdir = tdef["repo_subdir"]
+            if not subdir.endswith("/"):
+                subdir += "/"
+            if subdir not in stage_dirs:
+                stage_dirs.append(subdir)
+
     install_daemon()
-    git_push_migrated()
+    git_push_migrated(stage_dirs)
 
     print()
     print("=== Setup complete ===")
