@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Mesy — Multi-target memory sync daemon.
 
-Thin wrapper that delegates to mesy.main.
+Thin wrapper that delegates to src.main.
 """
 
-from mesy.main import main
+from src.main import main
 
 if __name__ == "__main__":
     main()

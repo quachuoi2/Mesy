@@ -30,11 +30,20 @@ Mesy/
 │       └── -some-raw-name/
 │           ├── .needs_mapping     # Marker with instructions
 │           └── *.md
-├── sync.py                        # Sync daemon
+├── src/                           # Mesy package (daemon logic)
+│   ├── config.py                  # Configuration loading, REPO_DIR, target parsing
+│   ├── git_utils.py               # Git operations, conflict resolution
+│   ├── main.py                    # Main loop, target orchestration
+│   └── targets/
+│       ├── base.py                # SyncTarget ABC
+│       ├── claude_code.py         # Claude Code target (project mapping, pending)
+│       └── generic.py             # Generic target (flat symlink sync)
+├── tests/                         # Test suite (pytest)
+├── sync.py                        # Entrypoint (delegates to src.main)
 ├── setup.py                       # Cross-platform onboarding (Linux/Windows/WSL)
 ├── projects.conf                  # Canonical project name mappings
 ├── claude-memory-sync.service     # Systemd unit template
-├── sync.conf                      # Config (intervals)
+├── sync.conf                      # Config (intervals, scan frequency)
 └── DUAL_BOOT_SETUP.md            # Notes for dual-boot / WSL environments
 ```
 
@@ -83,13 +92,19 @@ That's it. Memory syncs automatically from that point.
 
 ## What `sync.py` Does
 
+`sync.py` is a thin entrypoint that delegates to the `src/` package.
+
 - Watches for `.md` file changes (uses `watchdog` if installed, otherwise polls)
 - Debounces then commits and pushes (only `global/` and `projects/` — code files require manual commits)
 - Pulls remote changes every 60 seconds
+- Supports multiple sync targets (configured in `sync.conf`):
+  - **claude-code**: Claude Code project discovery, mapping, and pending adoption
+  - **generic**: Flat symlink sync for other tools (e.g., OpenClaw)
 - Auto-detects new Claude Code project memory directories:
   - **Mapped** (in `projects.conf`): adopted into the canonical directory and symlinked
   - **Unmapped**: staged in `projects/.pending/` with a `.needs_mapping` marker
 - Promotes pending projects when a mapping is added to `projects.conf`
+- Safety: verifies file migration before deleting source directories
 - On merge conflicts: keeps both versions and flags with `conflict: true` in frontmatter
 - On file migration conflicts (same filename, different content): merges both versions into one file with conflict markers
 
@@ -116,6 +131,29 @@ Edit `sync.conf`:
 debounce_seconds = 5        # Wait after last change before pushing
 pull_interval_seconds = 60  # How often to pull remote changes
 scan_interval_seconds = 60  # How often to scan for new projects
+```
+
+## Architecture
+
+The daemon logic lives in `src/` as a modular Python package:
+
+| Module | Responsibility |
+|--------|---------------|
+| `src/config.py` | Loads `sync.conf` and `projects.conf`, defines `REPO_DIR` |
+| `src/git_utils.py` | Git operations (commit, push, pull, conflict resolution) |
+| `src/main.py` | Main loop, target orchestration, watchdog/polling |
+| `src/targets/base.py` | `SyncTarget` abstract base class |
+| `src/targets/claude_code.py` | Claude Code project discovery and mapping |
+| `src/targets/generic.py` | Generic flat-directory sync (e.g., OpenClaw) |
+
+Targets are configured in `sync.conf` via `[target:*]` sections. The daemon builds target instances, runs initial sync, then enters the watch loop.
+
+## Testing
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install pytest
+.venv/bin/python -m pytest tests/ -v
 ```
 
 ## Dependencies
