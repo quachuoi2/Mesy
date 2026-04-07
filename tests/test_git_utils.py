@@ -90,7 +90,7 @@ class TestCommitAndPush:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        commit_and_push(["global/", "projects/"])
+        commit_and_push(["claude/global/", "claude/projects/"])
 
         git_subcommands = [c[3] for c in commands if c[0] == "git"]
         assert "add" in git_subcommands
@@ -172,7 +172,7 @@ class TestResolveConflicts:
 
     def test_resolves_conflict_markers_and_adds_frontmatter(self, tmp_repo, monkeypatch):
         """resolve_conflicts() rewrites conflict markers and adds conflict:true frontmatter."""
-        conflicted_file = tmp_repo / "global" / "memory.md"
+        conflicted_file = tmp_repo / "claude" / "global" / "memory.md"
         conflicted_file.write_text(
             "---\ntitle: test\n---\n"
             "<<<<<<< HEAD\nlocal content\n"
@@ -182,7 +182,7 @@ class TestResolveConflicts:
 
         def fake_run(cmd, **kw):
             if "diff" in cmd and "--diff-filter=U" in cmd:
-                return subprocess.CompletedProcess(cmd, 0, "global/memory.md", "")
+                return subprocess.CompletedProcess(cmd, 0, "claude/global/memory.md", "")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
@@ -196,7 +196,7 @@ class TestResolveConflicts:
 
     def test_calls_rebase_continue_after_resolution(self, tmp_repo, monkeypatch):
         """resolve_conflicts() calls rebase --continue after resolving files."""
-        conflicted_file = tmp_repo / "global" / "conflict.md"
+        conflicted_file = tmp_repo / "claude" / "global" / "conflict.md"
         conflicted_file.write_text(
             "<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> abc\n"
         )
@@ -205,7 +205,7 @@ class TestResolveConflicts:
         def fake_run(cmd, **kw):
             commands.append(cmd)
             if "diff" in cmd and "--diff-filter=U" in cmd:
-                return subprocess.CompletedProcess(cmd, 0, "global/conflict.md", "")
+                return subprocess.CompletedProcess(cmd, 0, "claude/global/conflict.md", "")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)

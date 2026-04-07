@@ -14,7 +14,7 @@ def make_target(claude_env) -> ClaudeCodeTarget:
     """Helper to build a ClaudeCodeTarget with injected paths."""
     return ClaudeCodeTarget(
         source=claude_env["projects_dir"],
-        repo_dir=claude_env["repo"] / "projects",
+        repo_dir=claude_env["repo"] / "claude" / "projects",
         claude_dir=claude_env["claude_dir"],
         projects_dir=claude_env["projects_dir"],
         pending_dir=claude_env["pending_dir"],
@@ -24,7 +24,7 @@ def make_target(claude_env) -> ClaudeCodeTarget:
 class TestSyncGlobalClaudeMd:
     def test_copies_and_symlinks_global_claude_md(self, claude_env, monkeypatch):
         """scan() copies global CLAUDE.md to repo and replaces it with a symlink."""
-        global_dir = claude_env["repo"] / "global"
+        global_dir = claude_env["repo"] / "claude" / "global"
         local_claude = claude_env["claude_dir"] / "CLAUDE.md"
         local_claude.write_text("# Global Config")
 
@@ -41,7 +41,7 @@ class TestSyncGlobalClaudeMd:
 
     def test_skips_if_already_symlinked(self, claude_env, monkeypatch):
         """scan() skips global CLAUDE.md if it's already a symlink."""
-        global_dir = claude_env["repo"] / "global"
+        global_dir = claude_env["repo"] / "claude" / "global"
         repo_claude = global_dir / "CLAUDE.md"
         repo_claude.write_text("# Already in repo")
 
@@ -59,7 +59,7 @@ class TestSyncGlobalClaudeMd:
 
     def test_symlinks_from_repo_when_no_local(self, claude_env, monkeypatch):
         """scan() creates symlink from repo to local when only repo file exists."""
-        global_dir = claude_env["repo"] / "global"
+        global_dir = claude_env["repo"] / "claude" / "global"
         repo_claude = global_dir / "CLAUDE.md"
         repo_claude.write_text("# Repo-only global CLAUDE.md")
 
@@ -89,7 +89,7 @@ class TestScanProjects:
         target = make_target(claude_env)
         target.scan()
 
-        canonical_dir = claude_env["repo"] / "projects" / "MyProject"
+        canonical_dir = claude_env["repo"] / "claude" / "projects" / "MyProject"
         assert (canonical_dir / "notes.md").exists()
         assert memory_dir.is_symlink()
         assert memory_dir.resolve() == canonical_dir.resolve()
@@ -157,7 +157,7 @@ class TestPromotePending:
         target = make_target(claude_env)
         target._promote_pending(mapping)
 
-        canonical_dir = claude_env["repo"] / "projects" / "NewProject"
+        canonical_dir = claude_env["repo"] / "claude" / "projects" / "NewProject"
         assert (canonical_dir / "file.md").exists()
         assert not pending_dir.exists()
 
@@ -180,7 +180,7 @@ class TestMigrateRepoToCanonical:
         raw_name = "-home-user-OldProject"
         mapping = {raw_name: "OldProject"}
 
-        projects_dir = claude_env["repo"] / "projects"
+        projects_dir = claude_env["repo"] / "claude" / "projects"
         raw_dir = projects_dir / raw_name
         raw_dir.mkdir(parents=True)
         (raw_dir / "notes.md").write_text("# Old Notes")
@@ -198,7 +198,7 @@ class TestMigrateRepoToCanonical:
         raw_name = "-home-user-Project"
         mapping = {raw_name: "Project"}
 
-        projects_dir = claude_env["repo"] / "projects"
+        projects_dir = claude_env["repo"] / "claude" / "projects"
         raw_dir = projects_dir / raw_name
         raw_dir.mkdir(parents=True)
         canonical_dir = projects_dir / "Project"
@@ -220,7 +220,7 @@ class TestSyncClaudeMd:
         local_claude = project_dir / "CLAUDE.md"
         local_claude.write_text("# Project Config")
 
-        repo_dir = claude_env["repo"] / "projects" / "Project"
+        repo_dir = claude_env["repo"] / "claude" / "projects" / "Project"
         repo_dir.mkdir(parents=True)
 
         target = make_target(claude_env)
@@ -237,7 +237,7 @@ class TestSyncClaudeMd:
         project_dir = claude_env["projects_dir"] / raw_name
         project_dir.mkdir(parents=True)
 
-        repo_dir = claude_env["repo"] / "projects" / "Project"
+        repo_dir = claude_env["repo"] / "claude" / "projects" / "Project"
         repo_dir.mkdir(parents=True)
         repo_claude = repo_dir / "CLAUDE.md"
         repo_claude.write_text("# In Repo")
@@ -287,4 +287,4 @@ class TestGetStageDirs:
     def test_returns_correct_dirs(self, claude_env):
         """get_stage_dirs() returns ['global/', 'projects/']."""
         target = make_target(claude_env)
-        assert target.get_stage_dirs() == ["global/", "projects/"]
+        assert target.get_stage_dirs() == ["claude/global/", "claude/projects/"]

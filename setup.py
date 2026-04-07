@@ -18,7 +18,7 @@ from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parent
 IS_WINDOWS = platform.system() == "Windows"
-PROJECTS_CONF_PATH = REPO_DIR / "projects.conf"
+PROJECTS_CONF_PATH = REPO_DIR / "claude" / "projects.conf"
 
 if IS_WINDOWS:
     CLAUDE_DIR = Path(os.environ["USERPROFILE"]) / ".claude"
@@ -171,7 +171,7 @@ def load_project_mappings() -> dict[str, str]:
 
 def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
     """Rename raw-named project dirs in the repo to their canonical names."""
-    projects_dir = REPO_DIR / "projects"
+    projects_dir = REPO_DIR / "claude" / "projects"
     if not projects_dir.exists():
         return
 
@@ -193,8 +193,8 @@ def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
 
 def setup_claude_code_symlinks() -> None:
     """Symlink global and project memories, plus CLAUDE.md files."""
-    make_symlink(CLAUDE_DIR / "memory", REPO_DIR / "global")
-    make_file_symlink(CLAUDE_DIR / "CLAUDE.md", REPO_DIR / "global" / "CLAUDE.md")
+    make_symlink(CLAUDE_DIR / "memory", REPO_DIR / "claude" / "global")
+    make_file_symlink(CLAUDE_DIR / "CLAUDE.md", REPO_DIR / "claude" / "global" / "CLAUDE.md")
 
     mapping = load_project_mappings()
     migrate_repo_to_canonical(mapping)
@@ -212,14 +212,14 @@ def setup_claude_code_symlinks() -> None:
 
             if raw_name in mapping:
                 canonical = mapping[raw_name]
-                canonical_dir = REPO_DIR / "projects" / canonical
+                canonical_dir = REPO_DIR / "claude" / "projects" / canonical
                 make_symlink(memory_path, canonical_dir)
                 make_file_symlink(
                     project_dir / "CLAUDE.md",
                     canonical_dir / "CLAUDE.md",
                 )
             elif memory_path.is_dir():
-                pending_dir = REPO_DIR / "projects" / ".pending" / raw_name
+                pending_dir = REPO_DIR / "claude" / "projects" / ".pending" / raw_name
                 pending_dir.mkdir(parents=True, exist_ok=True)
                 make_symlink(memory_path, pending_dir)
                 marker = pending_dir / ".needs_mapping"
@@ -243,7 +243,7 @@ def setup_claude_code_symlinks() -> None:
         memory_path = claude_project_dir / "memory"
         if memory_path.exists():
             continue
-        canonical_dir = REPO_DIR / "projects" / canonical
+        canonical_dir = REPO_DIR / "claude" / "projects" / canonical
         if canonical_dir.exists():
             claude_project_dir.mkdir(parents=True, exist_ok=True)
             make_symlink(memory_path, canonical_dir)
@@ -486,7 +486,7 @@ def main() -> None:
 
     # Load targets from sync.conf
     target_defs = load_sync_conf_targets()
-    stage_dirs = ["global/", "projects/"]
+    stage_dirs = ["claude/global/", "claude/projects/"]
 
     # Setup Claude Code target (always runs)
     print("--- Claude Code ---")

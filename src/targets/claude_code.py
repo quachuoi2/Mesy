@@ -15,7 +15,7 @@ log = logging.getLogger("mesy")
 
 CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
-PENDING_DIR = REPO_DIR / "projects" / ".pending"
+PENDING_DIR = REPO_DIR / "claude" / "projects" / ".pending"
 
 
 class ClaudeCodeTarget(SyncTarget):
@@ -39,7 +39,7 @@ class ClaudeCodeTarget(SyncTarget):
         self.claude_dir = claude_dir or CLAUDE_DIR
         self.projects_dir = projects_dir or PROJECTS_DIR
         self.repo_base = repo_base or REPO_DIR
-        self.pending_dir = pending_dir or (self.repo_base / "projects" / ".pending")
+        self.pending_dir = pending_dir or (self.repo_base / "claude" / "projects" / ".pending")
 
     def setup(self) -> None:
         """Initial migration — called by setup.py, not the daemon."""
@@ -58,10 +58,10 @@ class ClaudeCodeTarget(SyncTarget):
         self._scan_projects(mapping)
 
     def get_stage_dirs(self) -> list[str]:
-        return ["global/", "projects/"]
+        return ["claude/global/", "claude/projects/"]
 
     def get_watched_paths(self) -> list[Path]:
-        paths = [self.repo_dir, self.repo_base / "global"]
+        paths = [self.repo_dir, self.repo_base / "claude" / "global"]
         if self.projects_dir.exists():
             paths.append(self.projects_dir)
         return paths
@@ -71,7 +71,7 @@ class ClaudeCodeTarget(SyncTarget):
     def _sync_global_claude_md(self) -> None:
         """Migrate and symlink the global ~/.claude/CLAUDE.md."""
         local_claude = self.claude_dir / "CLAUDE.md"
-        repo_claude = self.repo_base / "global" / "CLAUDE.md"
+        repo_claude = self.repo_base / "claude" / "global" / "CLAUDE.md"
 
         if local_claude.is_symlink():
             return
@@ -113,7 +113,7 @@ class ClaudeCodeTarget(SyncTarget):
 
     def _migrate_repo_to_canonical(self, mapping: dict[str, str]) -> None:
         """Rename raw-named project dirs in the repo to their canonical names."""
-        projects_dir = self.repo_base / "projects"
+        projects_dir = self.repo_base / "claude" / "projects"
         if not projects_dir.exists():
             return
 
@@ -157,7 +157,7 @@ class ClaudeCodeTarget(SyncTarget):
                 continue
 
             canonical = mapping[raw_name]
-            canonical_dir = self.repo_base / "projects" / canonical
+            canonical_dir = self.repo_base / "claude" / "projects" / canonical
             canonical_dir.mkdir(parents=True, exist_ok=True)
 
             for f in pending_dir.iterdir():
@@ -201,7 +201,7 @@ class ClaudeCodeTarget(SyncTarget):
             if memory_dir.is_symlink():
                 raw_name = project_dir.name
                 if raw_name in mapping:
-                    canonical_dir = self.repo_base / "projects" / mapping[raw_name]
+                    canonical_dir = self.repo_base / "claude" / "projects" / mapping[raw_name]
                     self._sync_claude_md(project_dir, canonical_dir)
                 continue
 
@@ -209,7 +209,7 @@ class ClaudeCodeTarget(SyncTarget):
 
             if raw_name in mapping:
                 canonical = mapping[raw_name]
-                canonical_dir = self.repo_base / "projects" / canonical
+                canonical_dir = self.repo_base / "claude" / "projects" / canonical
                 self._migrate_memory_to_dir(memory_dir, canonical_dir)
 
                 # Verify all files migrated before deleting

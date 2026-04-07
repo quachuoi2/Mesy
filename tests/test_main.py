@@ -19,7 +19,7 @@ class TestBuildTargets:
             "name": "claude-code",
             "type": "claude-code",
             "source": Path("/tmp/src"),
-            "repo_subdir": "projects",
+            "repo_subdir": "claude/projects",
         }
         targets = build_targets([tdef])
         assert len(targets) == 1
@@ -75,7 +75,7 @@ class TestBuildTargets:
                 "name": "claude-code",
                 "type": "claude-code",
                 "source": Path("/tmp/claude"),
-                "repo_subdir": "projects",
+                "repo_subdir": "claude/projects",
             },
             {
                 "name": "openclaw",
@@ -96,12 +96,12 @@ class TestGetAllStageDirs:
     def test_deduplicates_identical_dirs_across_targets(self, tmp_repo):
         """get_all_stage_dirs() returns unique dirs even when targets share them."""
         t1 = MagicMock()
-        t1.get_stage_dirs.return_value = ["projects/", "global/"]
+        t1.get_stage_dirs.return_value = ["claude/projects/", "claude/global/"]
         t2 = MagicMock()
-        t2.get_stage_dirs.return_value = ["projects/"]  # duplicate
+        t2.get_stage_dirs.return_value = ["claude/projects/"]  # duplicate
 
         result = get_all_stage_dirs([t1, t2])
-        assert result == ["projects/", "global/"]
+        assert result == ["claude/projects/", "claude/global/"]
 
     def test_preserves_order_of_first_occurrence(self, tmp_repo):
         """get_all_stage_dirs() preserves insertion order, deduplicating on first seen."""
@@ -122,7 +122,7 @@ class TestGetMdMtimes:
     def test_finds_md_files_in_repo(self, tmp_repo):
         """get_md_mtimes() returns mtimes for all .md files in REPO_DIR."""
         (tmp_repo / "notes.md").write_text("# Notes")
-        (tmp_repo / "global" / "CLAUDE.md").write_text("# Global")
+        (tmp_repo / "claude" / "global" / "CLAUDE.md").write_text("# Global")
 
         result = get_md_mtimes()
 

@@ -43,15 +43,15 @@ class TestLoadConfig:
         conf.write_text(
             "[target:claude-code]\n"
             "source = /tmp/projects\n"
-            "repo_subdir = projects\n"
-            "mapping_conf = projects.conf\n"
+            "repo_subdir = claude/projects\n"
+            "mapping_conf = claude/projects.conf\n"
         )
         cfg = load_config()
         targets = load_targets(cfg)
         assert len(targets) == 1
         assert targets[0]["type"] == "claude-code"
         assert targets[0]["name"] == "claude-code"
-        assert targets[0]["mapping_conf"] == "projects.conf"
+        assert targets[0]["mapping_conf"] == "claude/projects.conf"
 
     def test_parse_generic_target(self, tmp_repo):
         """[target:*] without mapping_conf produces type=generic."""
@@ -109,7 +109,7 @@ class TestLoadConfig:
 class TestLoadProjectMappings:
     def test_load_project_mappings(self, tmp_repo):
         """Mappings from projects.conf are parsed correctly."""
-        conf = tmp_repo / "projects.conf"
+        conf = tmp_repo / "claude" / "projects.conf"
         conf.write_text(
             "[Workspace]\n"
             "paths = -home-user-Workspace, -home-user2-Workspace\n"

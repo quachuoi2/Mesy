@@ -10,7 +10,7 @@ log = logging.getLogger("mesy")
 
 REPO_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = REPO_DIR / "sync.conf"
-PROJECTS_CONF_PATH = REPO_DIR / "projects.conf"
+PROJECTS_CONF_PATH = REPO_DIR / "claude" / "projects.conf"
 
 
 def load_config() -> ConfigParser:

@@ -13,14 +13,14 @@ import pytest
 def tmp_repo(tmp_path, monkeypatch):
     """Create a temp Mesy repo structure and monkeypatch REPO_DIR everywhere."""
     repo = tmp_path / "Mesy"
-    (repo / "global").mkdir(parents=True)
-    (repo / "projects").mkdir(parents=True)
+    (repo / "claude" / "global").mkdir(parents=True)
+    (repo / "claude" / "projects").mkdir(parents=True)
     (repo / "openclaw" / "main").mkdir(parents=True)
 
     # Patch in config (the single source of truth)
     monkeypatch.setattr("src.config.REPO_DIR", repo)
     monkeypatch.setattr("src.config.CONFIG_PATH", repo / "sync.conf")
-    monkeypatch.setattr("src.config.PROJECTS_CONF_PATH", repo / "projects.conf")
+    monkeypatch.setattr("src.config.PROJECTS_CONF_PATH", repo / "claude" / "projects.conf")
 
     # Propagate to all modules that import REPO_DIR directly
     monkeypatch.setattr("src.git_utils.REPO_DIR", repo)
