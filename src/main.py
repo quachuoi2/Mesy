@@ -20,10 +20,12 @@ def build_targets(target_defs: list[dict]) -> list[SyncTarget]:
     targets = []
     for tdef in target_defs:
         repo_dir = DATA_DIR / tdef["repo_subdir"]
+        sync_mode = tdef.get("sync_mode", "symlink")
         if tdef["type"] == "claude-code":
             targets.append(ClaudeCodeTarget(
                 source=tdef["source"],
                 repo_dir=repo_dir,
+                sync_mode=sync_mode,
             ))
         elif tdef["type"] == "generic":
             targets.append(GenericTarget(
@@ -32,6 +34,7 @@ def build_targets(target_defs: list[dict]) -> list[SyncTarget]:
                 repo_dir=repo_dir,
                 file_patterns=tdef.get("file_patterns", ["*.md"]),
                 exclude=tdef.get("exclude", []),
+                sync_mode=sync_mode,
             ))
         else:
             log.warning("Unknown target type: %s", tdef["type"])

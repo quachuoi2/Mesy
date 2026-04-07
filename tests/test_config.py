@@ -106,6 +106,94 @@ class TestLoadConfig:
         assert targets[0]["exclude"] == ["TOOLS.md", "HEARTBEAT.md"]
 
 
+class TestSyncMode:
+    def test_sync_mode_defaults_to_symlink(self, tmp_repo):
+        """sync_mode defaults to 'symlink' when not specified in config."""
+        conf = tmp_repo / "sync.conf"
+        conf.write_text(
+            "[target:openclaw]\n"
+            "source = /tmp/workspace\n"
+            "repo_subdir = openclaw/main\n"
+        )
+        cfg = load_config()
+        targets = load_targets(cfg)
+        assert targets[0]["sync_mode"] == "symlink"
+
+    def test_sync_mode_accepts_copy(self, tmp_repo):
+        """sync_mode = copy is accepted and stored as-is."""
+        conf = tmp_repo / "sync.conf"
+        conf.write_text(
+            "[target:openclaw]\n"
+            "source = /tmp/workspace\n"
+            "repo_subdir = openclaw/main\n"
+            "sync_mode = copy\n"
+        )
+        cfg = load_config()
+        targets = load_targets(cfg)
+        assert targets[0]["sync_mode"] == "copy"
+
+    def test_sync_mode_explicit_symlink(self, tmp_repo):
+        """sync_mode = symlink is accepted explicitly."""
+        conf = tmp_repo / "sync.conf"
+        conf.write_text(
+            "[target:openclaw]\n"
+            "source = /tmp/workspace\n"
+            "repo_subdir = openclaw/main\n"
+            "sync_mode = symlink\n"
+        )
+        cfg = load_config()
+        targets = load_targets(cfg)
+        assert targets[0]["sync_mode"] == "symlink"
+
+    def test_sync_mode_invalid_warns_and_defaults_to_symlink(self, tmp_repo, caplog):
+        """Invalid sync_mode emits a warning and falls back to 'symlink'."""
+        import logging
+
+        conf = tmp_repo / "sync.conf"
+        conf.write_text(
+            "[target:openclaw]\n"
+            "source = /tmp/workspace\n"
+            "repo_subdir = openclaw/main\n"
+            "sync_mode = hardlink\n"
+        )
+        cfg = load_config()
+        with caplog.at_level(logging.WARNING, logger="mesy"):
+            targets = load_targets(cfg)
+
+        assert targets[0]["sync_mode"] == "symlink"
+        assert any("Invalid sync_mode" in r.message for r in caplog.records)
+
+    def test_sync_mode_invalid_message_includes_value(self, tmp_repo, caplog):
+        """Warning message for invalid sync_mode includes the bad value."""
+        import logging
+
+        conf = tmp_repo / "sync.conf"
+        conf.write_text(
+            "[target:openclaw]\n"
+            "source = /tmp/workspace\n"
+            "repo_subdir = openclaw/main\n"
+            "sync_mode = rsync\n"
+        )
+        cfg = load_config()
+        with caplog.at_level(logging.WARNING, logger="mesy"):
+            load_targets(cfg)
+
+        assert any("rsync" in r.message for r in caplog.records)
+
+    def test_sync_mode_whitespace_is_stripped(self, tmp_repo):
+        """sync_mode values with surrounding whitespace are accepted."""
+        conf = tmp_repo / "sync.conf"
+        conf.write_text(
+            "[target:openclaw]\n"
+            "source = /tmp/workspace\n"
+            "repo_subdir = openclaw/main\n"
+            "sync_mode =  copy  \n"
+        )
+        cfg = load_config()
+        targets = load_targets(cfg)
+        assert targets[0]["sync_mode"] == "copy"
+
+
 class TestLoadProjectMappings:
     def test_load_project_mappings(self, tmp_repo):
         """Mappings from projects.conf are parsed correctly."""

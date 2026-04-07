@@ -25,12 +25,14 @@ class SyncTarget(ABC):
         repo_dir: Path,
         file_patterns: list[str] | None = None,
         exclude: list[str] | None = None,
+        sync_mode: str = "symlink",
     ):
         self.name = name
         self.source = source
         self.repo_dir = repo_dir
         self.file_patterns = file_patterns or ["*.md"]
         self.exclude = exclude or []
+        self.sync_mode = sync_mode
 
     @abstractmethod
     def setup(self) -> None:

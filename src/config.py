@@ -111,6 +111,18 @@ def load_targets(cfg: ConfigParser) -> list[dict]:
         else:
             target_def["exclude"] = []
 
+        raw_sync_mode = cfg.get(section, "sync_mode", fallback="symlink").strip()
+        valid_sync_modes = {"symlink", "copy"}
+        if raw_sync_mode not in valid_sync_modes:
+            log.warning(
+                "[target:%s] Invalid sync_mode=%r; must be one of %s — defaulting to 'symlink'",
+                name,
+                raw_sync_mode,
+                sorted(valid_sync_modes),
+            )
+            raw_sync_mode = "symlink"
+        target_def["sync_mode"] = raw_sync_mode
+
         targets.append(target_def)
 
     return targets

@@ -28,6 +28,7 @@ class ClaudeCodeTarget(SyncTarget):
         projects_dir: Path | None = None,
         pending_dir: Path | None = None,
         repo_base: Path | None = None,
+        sync_mode: str = "symlink",
         **kwargs,
     ):
         super().__init__(
@@ -35,6 +36,7 @@ class ClaudeCodeTarget(SyncTarget):
             source=source,
             repo_dir=repo_dir,
             file_patterns=["*.md"],
+            sync_mode=sync_mode,
         )
         self.claude_dir = claude_dir or CLAUDE_DIR
         self.projects_dir = projects_dir or PROJECTS_DIR
@@ -69,10 +71,15 @@ class ClaudeCodeTarget(SyncTarget):
     # -- internal methods (moved from sync.py) --
 
     def _sync_global_claude_md(self) -> None:
-        """Migrate and symlink the global ~/.claude/CLAUDE.md."""
+        """Migrate and sync the global ~/.claude/CLAUDE.md."""
         local_claude = self.claude_dir / "CLAUDE.md"
         repo_claude = self.repo_base / "claude" / "global" / "CLAUDE.md"
 
+        if self.sync_mode == "copy":
+            self._sync_file_copy(local_claude, repo_claude, label="global CLAUDE.md")
+            return
+
+        # symlink mode
         if local_claude.is_symlink():
             return
 
@@ -90,10 +97,18 @@ class ClaudeCodeTarget(SyncTarget):
             log.info("Symlinked global CLAUDE.md (from repo)")
 
     def _sync_claude_md(self, project_dir: Path, repo_dir: Path) -> None:
-        """Migrate and symlink a project's CLAUDE.md file."""
+        """Migrate and sync a project's CLAUDE.md file."""
         local_claude = project_dir / "CLAUDE.md"
         repo_claude = repo_dir / "CLAUDE.md"
 
+        if self.sync_mode == "copy":
+            repo_dir.mkdir(parents=True, exist_ok=True)
+            self._sync_file_copy(
+                local_claude, repo_claude, label=f"CLAUDE.md for {project_dir.name}"
+            )
+            return
+
+        # symlink mode
         if local_claude.is_symlink():
             return
 
@@ -183,9 +198,18 @@ class ClaudeCodeTarget(SyncTarget):
 
             claude_memory = self.projects_dir / raw_name / "memory"
             if claude_memory.exists() and not claude_memory.is_symlink():
-                shutil.rmtree(claude_memory)
-                claude_memory.symlink_to(canonical_dir)
-                log.info("Symlinked %s -> %s", raw_name, canonical)
+                if self.sync_mode == "copy":
+                    # Copy mode: copy canonical files back into the real memory dir
+                    self._copy_dir_files(canonical_dir, claude_memory)
+                    log.info(
+                        "Synced canonical files back to memory dir (copy mode): %s -> %s",
+                        canonical,
+                        raw_name,
+                    )
+                else:
+                    shutil.rmtree(claude_memory)
+                    claude_memory.symlink_to(canonical_dir)
+                    log.info("Symlinked %s -> %s", raw_name, canonical)
 
         if self.pending_dir.exists() and not any(self.pending_dir.iterdir()):
             self.pending_dir.rmdir()
@@ -196,10 +220,25 @@ class ClaudeCodeTarget(SyncTarget):
             if not project_dir.is_dir():
                 continue
             memory_dir = project_dir / "memory"
-            if not memory_dir.exists():
+            if not memory_dir.exists() and not memory_dir.is_symlink():
                 continue
             if memory_dir.is_symlink():
                 raw_name = project_dir.name
+                if raw_name in mapping and self.sync_mode == "copy":
+                    canonical_dir = self.repo_base / "claude" / "projects" / mapping[raw_name]
+                    resolved = memory_dir.resolve()
+                    memory_dir.unlink()
+                    memory_dir.mkdir(parents=True, exist_ok=True)
+                    if resolved.exists() and resolved.is_dir():
+                        self._copy_dir_files(resolved, memory_dir)
+                    elif canonical_dir.exists():
+                        self._copy_dir_files(canonical_dir, memory_dir)
+                        log.warning("Symlink target missing for %s, restored from canonical dir", raw_name)
+                    else:
+                        log.warning("No source data found for symlink migration of %s", raw_name)
+                    log.info("Migrated project memory symlink to copy mode: %s", raw_name)
+                    self._sync_claude_md(project_dir, canonical_dir)
+                    continue
                 if raw_name in mapping:
                     canonical_dir = self.repo_base / "claude" / "projects" / mapping[raw_name]
                     self._sync_claude_md(project_dir, canonical_dir)
@@ -216,9 +255,17 @@ class ClaudeCodeTarget(SyncTarget):
                 if not self._verify_migration(memory_dir, canonical_dir):
                     log.error("Migration verification failed for %s, skipping rmtree", raw_name)
                     continue
-                shutil.rmtree(memory_dir)
-                memory_dir.symlink_to(canonical_dir)
-                log.info("Adopted project memory: %s -> %s", raw_name, canonical)
+
+                if self.sync_mode == "copy":
+                    # Copy mode: files are already mirrored into canonical_dir by
+                    # _migrate_memory_to_dir; leave memory_dir as a real directory.
+                    log.info(
+                        "Adopted project memory (copy mode): %s -> %s", raw_name, canonical
+                    )
+                else:
+                    shutil.rmtree(memory_dir)
+                    memory_dir.symlink_to(canonical_dir)
+                    log.info("Adopted project memory: %s -> %s", raw_name, canonical)
 
                 self._sync_claude_md(project_dir, canonical_dir)
             else:
@@ -243,13 +290,69 @@ class ClaudeCodeTarget(SyncTarget):
                     if not self._verify_migration(memory_dir, pending_dest):
                         log.error("Migration verification failed for %s, skipping rmtree", raw_name)
                         continue
-                    shutil.rmtree(memory_dir)
-                    memory_dir.symlink_to(pending_dest)
-                    log.warning(
-                        "Unmapped project memory: %s — staged in .pending/. "
-                        "Add a mapping in projects.conf to assign a canonical name.",
-                        raw_name,
-                    )
+
+                    if self.sync_mode == "copy":
+                        # Copy mode: keep memory_dir; files are already mirrored into pending_dest
+                        log.warning(
+                            "Unmapped project memory: %s — staged in .pending/ (copy mode). "
+                            "Add a mapping in projects.conf to assign a canonical name.",
+                            raw_name,
+                        )
+                    else:
+                        shutil.rmtree(memory_dir)
+                        memory_dir.symlink_to(pending_dest)
+                        log.warning(
+                            "Unmapped project memory: %s — staged in .pending/. "
+                            "Add a mapping in projects.conf to assign a canonical name.",
+                            raw_name,
+                        )
+
+    def _sync_file_copy(self, local: Path, repo: Path, label: str) -> None:
+        """Bidirectional single-file sync for copy mode.
+
+        - If local is a symlink (leftover from symlink mode): resolve content, replace with
+          a real file, then sync.
+        - local exists, repo missing → copy local → repo
+        - repo exists, local missing → copy repo → local
+        - both exist with different content → delegate to merge_conflicting_file
+        """
+        # Migrate leftover symlink in local position
+        if local.is_symlink():
+            real_content = local.resolve()
+            local.unlink()
+            if real_content.exists():
+                shutil.copy2(real_content, local)
+                log.info("Migrated symlink -> real file: %s", label)
+            elif repo.exists():
+                shutil.copy2(repo, local)
+                log.info("Symlink target missing, restored from repo: %s", label)
+            else:
+                log.warning("Symlink %s has no resolvable target, skipping", label)
+                return
+
+        if local.is_file():
+            if not repo.exists():
+                repo.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(local, repo)
+                log.info("Copied %s into repo (copy mode)", label)
+            elif not filecmp.cmp(local, repo, shallow=False):
+                merge_conflicting_file(local=local, repo=repo)
+        elif repo.exists():
+            local.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(repo, local)
+            log.info("Copied %s -> local (copy mode)", label)
+
+    def _copy_dir_files(self, source_dir: Path, dest_dir: Path) -> None:
+        """Copy all non-directory files from source_dir into dest_dir, merging conflicts."""
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for f in source_dir.iterdir():
+            if f.is_dir():
+                continue
+            dest = dest_dir / f.name
+            if not dest.exists():
+                shutil.copy2(f, dest)
+            elif not filecmp.cmp(f, dest, shallow=False):
+                merge_conflicting_file(local=f, repo=dest)
 
     def _verify_migration(self, source_dir: Path, target_dir: Path) -> bool:
         """Check that every file in source_dir has a corresponding file in target_dir."""

@@ -171,6 +171,146 @@ class TestAdoptDirectory:
         assert merge_calls[0][1] == repo_file
 
 
+class TestAdoptDirectoryCopy:
+    def test_copy_mode_files_copied_source_to_repo(self, generic_env):
+        """copy mode: source files are copied into repo (not symlinked)."""
+        (generic_env["source"] / "notes.md").write_text("# Notes")
+        (generic_env["source"] / "todo.md").write_text("# Todo")
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.setup()
+
+        assert (generic_env["repo_dir"] / "notes.md").exists()
+        assert (generic_env["repo_dir"] / "todo.md").exists()
+        # Source files must be regular files, not symlinks
+        assert not (generic_env["source"] / "notes.md").is_symlink()
+        assert not (generic_env["source"] / "todo.md").is_symlink()
+
+    def test_copy_mode_files_copied_repo_to_source(self, generic_env):
+        """copy mode: repo-only files (pulled from another device) are copied to source."""
+        (generic_env["repo_dir"] / "remote_only.md").write_text("# From remote")
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.scan()
+
+        source_file = generic_env["source"] / "remote_only.md"
+        assert source_file.exists()
+        assert not source_file.is_symlink()
+        assert source_file.read_text() == "# From remote"
+
+    def test_copy_mode_no_symlinks_created(self, generic_env):
+        """copy mode: no symlinks appear in either source or repo_dir after adoption."""
+        (generic_env["source"] / "a.md").write_text("A")
+        (generic_env["repo_dir"] / "b.md").write_text("B")
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.setup()
+
+        for f in generic_env["source"].iterdir():
+            assert not f.is_symlink(), f"{f} should not be a symlink in copy mode"
+        for f in generic_env["repo_dir"].iterdir():
+            assert not f.is_symlink(), f"{f} should not be a symlink in copy mode"
+
+    def test_copy_mode_symlink_to_copy_migration(self, generic_env):
+        """copy mode: leftover symlinks in source are migrated to real files."""
+        repo_file = generic_env["repo_dir"] / "notes.md"
+        repo_file.write_text("# Repo content")
+
+        source_link = generic_env["source"] / "notes.md"
+        source_link.symlink_to(repo_file)
+        assert source_link.is_symlink()
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.scan()
+
+        assert not source_link.is_symlink()
+        assert source_link.is_file()
+        assert source_link.read_text() == "# Repo content"
+
+    def test_copy_mode_symlink_with_missing_target_restored_from_repo(self, generic_env):
+        """copy mode: broken symlink in source is replaced with real copy from repo."""
+        repo_file = generic_env["repo_dir"] / "notes.md"
+        repo_file.write_text("# Repo content")
+
+        source_link = generic_env["source"] / "notes.md"
+        # Point at something that doesn't exist
+        source_link.symlink_to(generic_env["source"] / "nonexistent.md")
+        assert source_link.is_symlink()
+        assert not source_link.exists()  # broken
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.scan()
+
+        assert not source_link.is_symlink()
+        assert source_link.read_text() == "# Repo content"
+
+    def test_copy_mode_symlink_with_no_resolvable_target_is_skipped(self, generic_env, caplog):
+        """copy mode: broken symlink with no repo fallback is skipped with a warning."""
+        import logging
+
+        source_link = generic_env["source"] / "orphan.md"
+        source_link.symlink_to(generic_env["source"] / "ghost.md")
+        assert source_link.is_symlink()
+        assert not source_link.exists()
+
+        target = make_target(generic_env, sync_mode="copy")
+        with caplog.at_level(logging.WARNING, logger="mesy"):
+            target.scan()
+
+        # File should not have been created (symlink removed but nothing written)
+        assert not (generic_env["repo_dir"] / "orphan.md").exists()
+
+    def test_copy_mode_conflict_calls_merge(self, generic_env, monkeypatch):
+        """copy mode: diverged source and repo files are delegated to merge_conflicting_file."""
+        merge_calls = []
+
+        def fake_merge(local, repo):
+            merge_calls.append((local, repo))
+
+        monkeypatch.setattr("src.targets.generic.merge_conflicting_file", fake_merge)
+
+        src_file = generic_env["source"] / "notes.md"
+        repo_file = generic_env["repo_dir"] / "notes.md"
+        src_file.write_text("# Source version")
+        repo_file.write_text("# Repo version (different)")
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.setup()
+
+        assert len(merge_calls) == 1
+        assert merge_calls[0][0] == src_file
+        assert merge_calls[0][1] == repo_file
+
+    def test_copy_mode_recurses_into_subdirectories(self, generic_env):
+        """copy mode: files in source subdirectories are copied into matching repo subdirs."""
+        sub = generic_env["source"] / "memory"
+        sub.mkdir()
+        (sub / "project_notes.md").write_text("# Project Notes")
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.setup()
+
+        assert (generic_env["repo_dir"] / "memory" / "project_notes.md").exists()
+        assert not (sub / "project_notes.md").is_symlink()
+
+    def test_copy_mode_leftover_symlink_in_pass2_replaced_with_copy(self, generic_env):
+        """copy mode pass 2: leftover symlink in source position is replaced with a real copy."""
+        repo_file = generic_env["repo_dir"] / "remote.md"
+        repo_file.write_text("# Remote")
+
+        # Simulate a leftover symlink in source for a repo file
+        source_link = generic_env["source"] / "remote.md"
+        source_link.symlink_to(repo_file)
+        assert source_link.is_symlink()
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.scan()
+
+        # Symlink should be replaced with a real file
+        assert not source_link.is_symlink()
+        assert source_link.read_text() == "# Remote"
+
+
 class TestGetStageDirs:
     def test_returns_relative_path_with_trailing_slash(self, generic_env):
         """get_stage_dirs() returns the repo_subdir relative to REPO_DIR."""
