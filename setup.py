@@ -478,7 +478,7 @@ def load_sync_conf_targets() -> list[dict]:
 
 def install_systemd_service() -> None:
     """Install and enable the systemd user service (Linux only)."""
-    service_template = REPO_DIR / "claude-memory-sync.service"
+    service_template = REPO_DIR / "mesy.service"
     if not service_template.exists():
         log("skip", "Service template not found")
         return
@@ -487,12 +487,12 @@ def install_systemd_service() -> None:
     user_service_dir.mkdir(parents=True, exist_ok=True)
 
     service_content = service_template.read_text().replace("%REPO_DIR%", str(REPO_DIR))
-    dest = user_service_dir / "claude-memory-sync.service"
+    dest = user_service_dir / "mesy.service"
     dest.write_text(service_content)
 
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
     subprocess.run(
-        ["systemctl", "--user", "enable", "--now", "claude-memory-sync"], check=False
+        ["systemctl", "--user", "enable", "--now", "mesy"], check=False
     )
     log("ok", "Systemd service installed and started")
 
@@ -507,7 +507,7 @@ def install_systemd_service() -> None:
 
 def install_task_scheduler(python_exe: str) -> None:
     """Install a Windows Task Scheduler task for the sync daemon."""
-    task_name = "MesyClaudeMemorySync"
+    task_name = "MesyMemorySync"
     sync_script = REPO_DIR / "sync.py"
 
     subprocess.run(
@@ -596,9 +596,9 @@ def main() -> None:
     print("=== Setup complete ===")
     print("Memory sync daemon is running. Changes will auto-sync to GitHub.")
     if IS_WINDOWS:
-        print("Check status: schtasks /Query /TN MesyClaudeMemorySync")
+        print("Check status: schtasks /Query /TN MesyMemorySync")
     else:
-        print("Check status: systemctl --user status claude-memory-sync")
+        print("Check status: systemctl --user status mesy")
 
 
 if __name__ == "__main__":

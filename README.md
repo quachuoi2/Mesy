@@ -42,7 +42,7 @@ Mesy/
 ├── sync.py                        # Entrypoint (delegates to src.main)
 ├── setup.py                       # Cross-platform onboarding (Linux/Windows/WSL)
 ├── projects.conf                  # Canonical project name mappings
-├── claude-memory-sync.service     # Systemd unit template
+├── mesy.service                   # Systemd unit template
 ├── sync.conf                      # Config (intervals, scan frequency)
 └── DUAL_BOOT_SETUP.md            # Notes for dual-boot / WSL environments
 ```
@@ -167,18 +167,18 @@ python3 -m venv .venv
 ### Linux (systemd)
 
 ```bash
-systemctl --user status claude-memory-sync     # Check status
-systemctl --user restart claude-memory-sync    # Restart
-journalctl --user -u claude-memory-sync -f     # View logs
-systemctl --user stop claude-memory-sync       # Stop
+systemctl --user status mesy     # Check status
+systemctl --user restart mesy    # Restart
+journalctl --user -u mesy -f     # View logs
+systemctl --user stop mesy       # Stop
 ```
 
 ### Windows (Task Scheduler)
 
 ```powershell
-schtasks /Query /TN MesyClaudeMemorySync       # Check status
-schtasks /Run /TN MesyClaudeMemorySync          # Start
-schtasks /End /TN MesyClaudeMemorySync          # Stop
+schtasks /Query /TN MesyMemorySync       # Check status
+schtasks /Run /TN MesyMemorySync          # Start
+schtasks /End /TN MesyMemorySync          # Stop
 ```
 
 ## Dual-Boot / WSL

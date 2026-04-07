@@ -1,5 +1,5 @@
 [Unit]
-Description=Mesy - Claude Code Memory Sync Daemon
+Description=Mesy - AI/Agent Memory Sync Daemon
 After=network-online.target
 
 [Service]
