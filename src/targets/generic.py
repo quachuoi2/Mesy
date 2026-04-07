@@ -116,6 +116,14 @@ class GenericTarget(SyncTarget):
                 continue
 
             source_file = source_dir / repo_file.name
-            if not source_file.exists():
-                source_file.symlink_to(repo_file)
-                log.info("[%s] Symlinked %s (from repo)", self.name, repo_file.name)
+            if source_file.is_symlink():
+                if source_file.resolve() == repo_file.resolve():
+                    # Already correct — nothing to do
+                    continue
+                # Broken or wrong symlink — replace it
+                source_file.unlink()
+            elif source_file.exists():
+                # Regular file — leave it for the adoption loop above to handle
+                continue
+            source_file.symlink_to(repo_file)
+            log.info("[%s] Symlinked %s (from repo)", self.name, repo_file.name)

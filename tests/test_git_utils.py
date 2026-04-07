@@ -84,7 +84,9 @@ class TestCommitAndPush:
             if "status" in cmd:
                 # has_local_changes -> True
                 return subprocess.CompletedProcess(cmd, 0, "M file.md", "")
-            if "diff" in cmd and "--cached" in cmd:
+            if "diff" in cmd and "--cached" in cmd and "--name-status" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, "M\tfile.md\n", "")
+            if "diff" in cmd and "--cached" in cmd and "--quiet" in cmd:
                 # staged changes exist (rc=1 means there are staged changes)
                 return subprocess.CompletedProcess(cmd, 1, "", "")
             return subprocess.CompletedProcess(cmd, 0, "", "")
@@ -97,6 +99,11 @@ class TestCommitAndPush:
         assert "commit" in git_subcommands
         assert "pull" in git_subcommands
         assert "push" in git_subcommands
+
+        # Verify commit message includes changed files
+        commit_cmd = [c for c in commands if c[0] == "git" and c[3] == "commit"][0]
+        commit_msg = commit_cmd[commit_cmd.index("-m") + 1]
+        assert "update file.md" in commit_msg
 
     def test_skips_when_no_changes(self, tmp_repo, monkeypatch):
         """commit_and_push() exits early when has_local_changes() is False."""
@@ -121,7 +128,9 @@ class TestCommitAndPush:
         def fake_run(cmd, **kw):
             if "status" in cmd:
                 return subprocess.CompletedProcess(cmd, 0, "M file.md", "")
-            if "diff" in cmd and "--cached" in cmd:
+            if "diff" in cmd and "--cached" in cmd and "--name-status" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, "M\tfile.md\n", "")
+            if "diff" in cmd and "--cached" in cmd and "--quiet" in cmd:
                 return subprocess.CompletedProcess(cmd, 1, "", "")
             if "push" in cmd:
                 return subprocess.CompletedProcess(cmd, 128, "", "fatal: unable to connect")

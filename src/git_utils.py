@@ -39,7 +39,20 @@ def commit_and_push(stage_dirs: list[str]) -> None:
 
     hostname = socket.gethostname()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # List changed files for the commit message
+    name_status = git("diff", "--cached", "--name-status")
+    changed_lines = []
+    for line in name_status.stdout.strip().splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) == 2:
+            status, filepath = parts
+            prefix = {"A": "add", "M": "update", "D": "delete"}.get(status, status)
+            changed_lines.append(f"  {prefix} {filepath}")
+
     msg = f"sync from {hostname} at {now}"
+    if changed_lines:
+        msg += "\n\n" + "\n".join(changed_lines)
     commit_result = git("commit", "-m", msg)
     if commit_result.returncode != 0:
         log.warning("commit failed: %s", commit_result.stderr)

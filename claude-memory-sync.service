@@ -3,6 +3,7 @@ Description=Mesy - Claude Code Memory Sync Daemon
 After=network-online.target
 
 [Service]
+EnvironmentFile=-%REPO_DIR%/.env
 ExecStart=/usr/bin/python3 %REPO_DIR%/sync.py
 Restart=on-failure
 RestartSec=10

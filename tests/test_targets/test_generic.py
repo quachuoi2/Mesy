@@ -129,6 +129,25 @@ class TestAdoptDirectory:
         assert source_link.is_symlink()
         assert source_link.resolve() == (generic_env["repo_dir"] / "remote_only.md").resolve()
 
+    def test_replaces_broken_symlink_with_correct_symlink(self, generic_env):
+        """_adopt_directory() replaces a broken symlink at the source path with a correct one."""
+        repo_file = generic_env["repo_dir"] / "remote_only.md"
+        repo_file.write_text("# Remote")
+
+        # Create a broken symlink at the would-be source path
+        source_link = generic_env["source"] / "remote_only.md"
+        source_link.symlink_to(generic_env["source"] / "nonexistent_target.md")
+        assert source_link.is_symlink()
+        assert not source_link.exists()  # confirms it's broken
+
+        target = make_target(generic_env)
+        target.scan()
+
+        # Broken symlink should now point correctly to the repo file
+        assert source_link.is_symlink()
+        assert source_link.exists()
+        assert source_link.resolve() == repo_file.resolve()
+
     def test_merges_conflicting_files(self, generic_env, monkeypatch):
         """_adopt_directory() calls merge_conflicting_file when source and repo differ."""
         merge_calls = []

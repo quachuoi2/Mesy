@@ -25,6 +25,25 @@ else:
     CLAUDE_DIR = Path.home() / ".claude"
 
 
+def _load_dotenv() -> None:
+    """Load REPO_DIR/.env into os.environ, skipping keys already set in the environment."""
+    env_file = REPO_DIR / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv()
+
+
 def _resolve_data_dir() -> Path:
     """Resolve DATA_DIR in priority order:
     1. MESY_DATA_DIR env var (if set and points to a valid directory)
@@ -47,6 +66,66 @@ def _resolve_data_dir() -> Path:
 
 DATA_DIR = _resolve_data_dir()
 PROJECTS_CONF_PATH = DATA_DIR / "claude" / "projects.conf"
+
+
+def _write_data_dir_to_env(path: Path) -> None:
+    """Persist MESY_DATA_DIR into REPO_DIR/.env, overwriting any existing line."""
+    env_file = REPO_DIR / ".env"
+    new_line = f"MESY_DATA_DIR={path}"
+
+    if env_file.exists():
+        lines = env_file.read_text().splitlines()
+        updated = False
+        new_lines = []
+        for line in lines:
+            if line.strip().startswith("MESY_DATA_DIR="):
+                new_lines.append(new_line)
+                updated = True
+            else:
+                new_lines.append(line)
+        if not updated:
+            new_lines.append(new_line)
+        env_file.write_text("\n".join(new_lines) + "\n")
+    else:
+        env_file.write_text(new_line + "\n")
+
+
+def prompt_data_dir() -> Path:
+    """Ask the user where their Mesy-Data folder lives and persist the choice.
+
+    Returns the resolved, confirmed data directory path.
+    """
+    current = _resolve_data_dir()
+    is_configured = current != REPO_DIR
+
+    if is_configured:
+        print(f"Data dir: {current}")
+        answer = input("Change data directory? [y/N]: ").strip().lower()
+        if answer != "y":
+            return current
+
+    default_path = Path.home() / "Workspace" / "Mesy-Data"
+    chosen_raw = input(f"Data directory [{default_path}]: ").strip()
+    chosen = Path(chosen_raw).expanduser().resolve() if chosen_raw else default_path.resolve()
+
+    try:
+        chosen.relative_to(REPO_DIR)
+        inside_repo = True
+    except ValueError:
+        inside_repo = False
+    if inside_repo or chosen == REPO_DIR:
+        raise SystemExit("[error] Data dir cannot be inside the code repo")
+
+    if not chosen.exists():
+        create_answer = input("Directory doesn't exist. Create it? [Y/n]: ").strip().lower()
+        if create_answer in ("", "y"):
+            chosen.mkdir(parents=True, exist_ok=True)
+        else:
+            raise SystemExit(f"[error] Aborted: {chosen} does not exist")
+
+    _write_data_dir_to_env(chosen)
+    os.environ["MESY_DATA_DIR"] = str(chosen)
+    return chosen
 
 
 def log(tag: str, msg: str) -> None:
@@ -344,9 +423,17 @@ def setup_generic_target(name: str, source: Path, repo_subdir: str,
             if not any(fnmatch.fnmatch(repo_file.name, pat) for pat in file_patterns):
                 continue
             src_file = src / repo_file.name
-            if not src_file.exists():
-                os.symlink(repo_file, src_file)
-                log("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
+            if src_file.is_symlink():
+                if src_file.resolve() == repo_file.resolve():
+                    # Already correct — nothing to do
+                    continue
+                # Broken or wrong symlink — replace it
+                src_file.unlink()
+            elif src_file.exists():
+                # Regular file — leave it for the adoption loop above to handle
+                continue
+            os.symlink(repo_file, src_file)
+            log("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
 
     adopt_dir(source, repo_dir)
 
@@ -469,35 +556,6 @@ def install_daemon() -> None:
         install_systemd_service()
 
 
-def git_push_migrated(stage_dirs: list[str]) -> None:
-    """Commit and push any migrated files."""
-    subprocess.run(["git", "-C", str(DATA_DIR), "add"] + stage_dirs, check=False)
-    result = subprocess.run(
-        ["git", "-C", str(DATA_DIR), "diff", "--cached", "--quiet"],
-        check=False,
-    )
-    if result.returncode != 0:
-        hostname = socket.gethostname()
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(DATA_DIR),
-                "commit",
-                "-m",
-                f"onboard {hostname}: migrate existing memory",
-            ],
-            check=False,
-        )
-        push = subprocess.run(
-            ["git", "-C", str(DATA_DIR), "push", "origin", "main"],
-            capture_output=True,
-            check=False,
-        )
-        if push.returncode != 0:
-            log("warn", "Push failed (offline?), will sync later")
-
-
 def main() -> None:
     print("=== Mesy: Multi-Target Memory Sync Setup ===")
     print(f"Platform: {platform.system()}")
@@ -505,11 +563,16 @@ def main() -> None:
     print(f"Claude:   {CLAUDE_DIR}")
     print()
 
+    chosen_data_dir = prompt_data_dir()
+    global DATA_DIR, PROJECTS_CONF_PATH  # Must reassign before setup functions read these globals
+    DATA_DIR = chosen_data_dir
+    PROJECTS_CONF_PATH = DATA_DIR / "claude" / "projects.conf"
+    print()
+
     CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
 
     # Load targets from sync.conf
     target_defs = load_sync_conf_targets()
-    stage_dirs = ["claude/global/", "claude/projects/"]
 
     # Setup Claude Code target (always runs)
     print("--- Claude Code ---")
@@ -526,15 +589,8 @@ def main() -> None:
                 file_patterns=tdef["file_patterns"],
                 exclude=tdef["exclude"],
             )
-            # Add this target's repo subdir to stage dirs
-            subdir = tdef["repo_subdir"]
-            if not subdir.endswith("/"):
-                subdir += "/"
-            if subdir not in stage_dirs:
-                stage_dirs.append(subdir)
 
     install_daemon()
-    git_push_migrated(stage_dirs)
 
     print()
     print("=== Setup complete ===")
