@@ -18,12 +18,35 @@ from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parent
 IS_WINDOWS = platform.system() == "Windows"
-PROJECTS_CONF_PATH = REPO_DIR / "claude" / "projects.conf"
 
 if IS_WINDOWS:
     CLAUDE_DIR = Path(os.environ["USERPROFILE"]) / ".claude"
 else:
     CLAUDE_DIR = Path.home() / ".claude"
+
+
+def _resolve_data_dir() -> Path:
+    """Resolve DATA_DIR in priority order:
+    1. MESY_DATA_DIR env var (if set and points to a valid directory)
+    2. Sibling ../Mesy-Data relative to REPO_DIR
+    3. REPO_DIR (backwards compat fallback)
+    """
+    env_val = os.environ.get("MESY_DATA_DIR", "").strip()
+    if env_val:
+        candidate = Path(env_val).expanduser().resolve()
+        if candidate.is_dir():
+            return candidate
+        print(f"[warn] MESY_DATA_DIR={env_val} is not a valid directory, ignoring")
+
+    sibling = (REPO_DIR / ".." / "Mesy-Data").resolve()
+    if sibling.is_dir():
+        return sibling
+
+    return REPO_DIR
+
+
+DATA_DIR = _resolve_data_dir()
+PROJECTS_CONF_PATH = DATA_DIR / "claude" / "projects.conf"
 
 
 def log(tag: str, msg: str) -> None:
@@ -171,7 +194,7 @@ def load_project_mappings() -> dict[str, str]:
 
 def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
     """Rename raw-named project dirs in the repo to their canonical names."""
-    projects_dir = REPO_DIR / "claude" / "projects"
+    projects_dir = DATA_DIR / "claude" / "projects"
     if not projects_dir.exists():
         return
 
@@ -193,8 +216,8 @@ def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
 
 def setup_claude_code_symlinks() -> None:
     """Symlink global and project memories, plus CLAUDE.md files."""
-    make_symlink(CLAUDE_DIR / "memory", REPO_DIR / "claude" / "global")
-    make_file_symlink(CLAUDE_DIR / "CLAUDE.md", REPO_DIR / "claude" / "global" / "CLAUDE.md")
+    make_symlink(CLAUDE_DIR / "memory", DATA_DIR / "claude" / "global")
+    make_file_symlink(CLAUDE_DIR / "CLAUDE.md", DATA_DIR / "claude" / "global" / "CLAUDE.md")
 
     mapping = load_project_mappings()
     migrate_repo_to_canonical(mapping)
@@ -212,14 +235,14 @@ def setup_claude_code_symlinks() -> None:
 
             if raw_name in mapping:
                 canonical = mapping[raw_name]
-                canonical_dir = REPO_DIR / "claude" / "projects" / canonical
+                canonical_dir = DATA_DIR / "claude" / "projects" / canonical
                 make_symlink(memory_path, canonical_dir)
                 make_file_symlink(
                     project_dir / "CLAUDE.md",
                     canonical_dir / "CLAUDE.md",
                 )
             elif memory_path.is_dir():
-                pending_dir = REPO_DIR / "claude" / "projects" / ".pending" / raw_name
+                pending_dir = DATA_DIR / "claude" / "projects" / ".pending" / raw_name
                 pending_dir.mkdir(parents=True, exist_ok=True)
                 make_symlink(memory_path, pending_dir)
                 marker = pending_dir / ".needs_mapping"
@@ -243,7 +266,7 @@ def setup_claude_code_symlinks() -> None:
         memory_path = claude_project_dir / "memory"
         if memory_path.exists():
             continue
-        canonical_dir = REPO_DIR / "claude" / "projects" / canonical
+        canonical_dir = DATA_DIR / "claude" / "projects" / canonical
         if canonical_dir.exists():
             claude_project_dir.mkdir(parents=True, exist_ok=True)
             make_symlink(memory_path, canonical_dir)
@@ -259,7 +282,7 @@ def setup_generic_target(name: str, source: Path, repo_subdir: str,
     """Set up a generic sync target: copy files into repo, replace with symlinks."""
     import fnmatch
 
-    repo_dir = REPO_DIR / repo_subdir
+    repo_dir = DATA_DIR / repo_subdir
 
     if not source.exists():
         log("skip", f"[{name}] Source {source} does not exist")
@@ -330,7 +353,7 @@ def setup_generic_target(name: str, source: Path, repo_subdir: str,
 
 def load_sync_conf_targets() -> list[dict]:
     """Load target definitions from sync.conf."""
-    config_path = REPO_DIR / "sync.conf"
+    config_path = DATA_DIR / "sync.conf"
     if not config_path.exists():
         return []
 
@@ -448,9 +471,9 @@ def install_daemon() -> None:
 
 def git_push_migrated(stage_dirs: list[str]) -> None:
     """Commit and push any migrated files."""
-    subprocess.run(["git", "-C", str(REPO_DIR), "add"] + stage_dirs, check=False)
+    subprocess.run(["git", "-C", str(DATA_DIR), "add"] + stage_dirs, check=False)
     result = subprocess.run(
-        ["git", "-C", str(REPO_DIR), "diff", "--cached", "--quiet"],
+        ["git", "-C", str(DATA_DIR), "diff", "--cached", "--quiet"],
         check=False,
     )
     if result.returncode != 0:
@@ -459,7 +482,7 @@ def git_push_migrated(stage_dirs: list[str]) -> None:
             [
                 "git",
                 "-C",
-                str(REPO_DIR),
+                str(DATA_DIR),
                 "commit",
                 "-m",
                 f"onboard {hostname}: migrate existing memory",
@@ -467,7 +490,7 @@ def git_push_migrated(stage_dirs: list[str]) -> None:
             check=False,
         )
         push = subprocess.run(
-            ["git", "-C", str(REPO_DIR), "push", "origin", "main"],
+            ["git", "-C", str(DATA_DIR), "push", "origin", "main"],
             capture_output=True,
             check=False,
         )

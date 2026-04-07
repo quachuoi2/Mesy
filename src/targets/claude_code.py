@@ -7,7 +7,7 @@ import socket
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import REPO_DIR, load_project_mappings
+from src.config import DATA_DIR, load_project_mappings
 from src.git_utils import merge_conflicting_file
 from src.targets.base import SyncTarget
 
@@ -15,7 +15,7 @@ log = logging.getLogger("mesy")
 
 CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
-PENDING_DIR = REPO_DIR / "claude" / "projects" / ".pending"
+PENDING_DIR = DATA_DIR / "claude" / "projects" / ".pending"
 
 
 class ClaudeCodeTarget(SyncTarget):
@@ -38,7 +38,7 @@ class ClaudeCodeTarget(SyncTarget):
         )
         self.claude_dir = claude_dir or CLAUDE_DIR
         self.projects_dir = projects_dir or PROJECTS_DIR
-        self.repo_base = repo_base or REPO_DIR
+        self.repo_base = repo_base or DATA_DIR
         self.pending_dir = pending_dir or (self.repo_base / "claude" / "projects" / ".pending")
 
     def setup(self) -> None:

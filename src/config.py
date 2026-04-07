@@ -3,14 +3,38 @@
 from __future__ import annotations
 
 import logging
+import os
 from configparser import ConfigParser
 from pathlib import Path
 
 log = logging.getLogger("mesy")
 
 REPO_DIR = Path(__file__).resolve().parent.parent
-CONFIG_PATH = REPO_DIR / "sync.conf"
-PROJECTS_CONF_PATH = REPO_DIR / "claude" / "projects.conf"
+
+
+def _resolve_data_dir() -> Path:
+    """Resolve DATA_DIR in priority order:
+    1. MESY_DATA_DIR env var (if set and points to a valid directory)
+    2. Sibling ../Mesy-Data relative to REPO_DIR
+    3. REPO_DIR (backwards compat fallback)
+    """
+    env_val = os.environ.get("MESY_DATA_DIR", "").strip()
+    if env_val:
+        candidate = Path(env_val).expanduser().resolve()
+        if candidate.is_dir():
+            return candidate
+        log.warning("MESY_DATA_DIR=%s is not a valid directory, ignoring", env_val)
+
+    sibling = (REPO_DIR / ".." / "Mesy-Data").resolve()
+    if sibling.is_dir():
+        return sibling
+
+    return REPO_DIR
+
+
+DATA_DIR = _resolve_data_dir()
+CONFIG_PATH = DATA_DIR / "sync.conf"
+PROJECTS_CONF_PATH = DATA_DIR / "claude" / "projects.conf"
 
 
 def load_config() -> ConfigParser:

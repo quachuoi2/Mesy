@@ -11,7 +11,7 @@ import pytest
 
 @pytest.fixture
 def tmp_repo(tmp_path, monkeypatch):
-    """Create a temp Mesy repo structure and monkeypatch REPO_DIR everywhere."""
+    """Create a temp Mesy repo structure and monkeypatch REPO_DIR/DATA_DIR everywhere."""
     repo = tmp_path / "Mesy"
     (repo / "claude" / "global").mkdir(parents=True)
     (repo / "claude" / "projects").mkdir(parents=True)
@@ -19,13 +19,17 @@ def tmp_repo(tmp_path, monkeypatch):
 
     # Patch in config (the single source of truth)
     monkeypatch.setattr("src.config.REPO_DIR", repo)
+    monkeypatch.setattr("src.config.DATA_DIR", repo)
     monkeypatch.setattr("src.config.CONFIG_PATH", repo / "sync.conf")
     monkeypatch.setattr("src.config.PROJECTS_CONF_PATH", repo / "claude" / "projects.conf")
 
-    # Propagate to all modules that import REPO_DIR directly
+    # Propagate to all modules that import REPO_DIR or DATA_DIR directly
     monkeypatch.setattr("src.git_utils.REPO_DIR", repo)
+    monkeypatch.setattr("src.git_utils.DATA_DIR", repo)
     monkeypatch.setattr("src.main.REPO_DIR", repo)
-    monkeypatch.setattr("src.targets.claude_code.REPO_DIR", repo)
+    monkeypatch.setattr("src.main.DATA_DIR", repo)
+    monkeypatch.setattr("src.targets.claude_code.DATA_DIR", repo)
+    monkeypatch.setattr("src.targets.claude_code.PENDING_DIR", repo / "claude" / "projects" / ".pending")
 
     return repo
 

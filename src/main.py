@@ -4,7 +4,7 @@ import logging
 import time
 from pathlib import Path
 
-from src.config import REPO_DIR, get_mesy_settings, load_config, load_targets
+from src.config import DATA_DIR, REPO_DIR, get_mesy_settings, load_config, load_targets
 from src.git_utils import commit_and_push, pull_remote
 from src.targets.base import SyncTarget
 from src.targets.claude_code import ClaudeCodeTarget
@@ -19,7 +19,7 @@ def build_targets(target_defs: list[dict]) -> list[SyncTarget]:
     """Instantiate SyncTarget objects from config definitions."""
     targets = []
     for tdef in target_defs:
-        repo_dir = REPO_DIR / tdef["repo_subdir"]
+        repo_dir = DATA_DIR / tdef["repo_subdir"]
         if tdef["type"] == "claude-code":
             targets.append(ClaudeCodeTarget(
                 source=tdef["source"],
@@ -51,9 +51,9 @@ def get_all_stage_dirs(targets: list[SyncTarget]) -> list[str]:
 
 
 def get_md_mtimes() -> dict[str, float]:
-    """Get modification times of all .md files in repo."""
+    """Get modification times of all .md files in data dir."""
     mtimes = {}
-    for md_file in REPO_DIR.rglob("*.md"):
+    for md_file in DATA_DIR.rglob("*.md"):
         if ".git" in md_file.parts:
             continue
         try:
@@ -85,8 +85,8 @@ def run_with_watchdog(targets: list[SyncTarget], settings: dict) -> None:
 
     handler = MdChangeHandler()
     observer = Observer()
-    observer.schedule(handler, str(REPO_DIR), recursive=True)
-    log.info("Watching with watchdog (debounce=%ss)", debounce)
+    observer.schedule(handler, str(DATA_DIR), recursive=True)
+    log.info("Watching with watchdog (debounce=%ss, data_dir=%s)", debounce, DATA_DIR)
 
     last_pull = time.time()
     last_scan = time.time()
@@ -162,7 +162,7 @@ def main() -> None:
         log.error("No targets configured in sync.conf. Add [target:*] sections.")
         return
 
-    log.info("Mesy sync daemon starting (repo: %s)", REPO_DIR)
+    log.info("Mesy sync daemon starting (repo: %s, data: %s)", REPO_DIR, DATA_DIR)
     log.info("Targets: %s", ", ".join(t.name for t in targets))
 
     # Initial sync

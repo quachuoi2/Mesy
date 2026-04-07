@@ -6,13 +6,13 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import REPO_DIR
+from src.config import DATA_DIR, REPO_DIR
 
 log = logging.getLogger("mesy")
 
 
 def git(*args: str, check: bool = False) -> subprocess.CompletedProcess:
-    cmd = ["git", "-C", str(REPO_DIR)] + list(args)
+    cmd = ["git", "-C", str(DATA_DIR)] + list(args)
     log.debug("git %s", " ".join(args))
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=check)
 
@@ -68,7 +68,7 @@ def resolve_conflicts() -> None:
 
     conflicted = result.stdout.strip().split("\n")
     for filepath in conflicted:
-        full_path = REPO_DIR / filepath
+        full_path = DATA_DIR / filepath
         if not full_path.exists():
             continue
 

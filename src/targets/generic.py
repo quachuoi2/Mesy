@@ -48,10 +48,10 @@ class GenericTarget(SyncTarget):
         self._adopt_directory(self.source, self.repo_dir)
 
     def get_stage_dirs(self) -> list[str]:
-        # Return the repo_subdir relative to REPO_DIR
-        from src.config import REPO_DIR
+        # Return the repo_subdir relative to DATA_DIR
+        from src.config import DATA_DIR
         try:
-            rel = self.repo_dir.relative_to(REPO_DIR)
+            rel = self.repo_dir.relative_to(DATA_DIR)
             return [str(rel) + "/"]
         except ValueError:
             return [str(self.repo_dir) + "/"]
