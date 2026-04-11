@@ -6,7 +6,9 @@ import logging
 import shutil
 from pathlib import Path
 
+from src.config import DATA_DIR
 from src.git_utils import merge_conflicting_file
+from src.sync_state import get_sync_state
 from src.targets.base import SyncTarget
 
 log = logging.getLogger("mesy")
@@ -185,8 +187,11 @@ class GenericTarget(SyncTarget):
             if not dest.exists():
                 shutil.copy2(item, dest)
                 log.info("[%s] Copied %s -> repo (copy mode)", self.name, item.name)
+                sync_state = get_sync_state()
+                key = self._repo_key(dest)
+                sync_state.set_hash(key, item.read_text())
             elif not filecmp.cmp(item, dest, shallow=False):
-                merge_conflicting_file(local=item, repo=dest)
+                self._three_way_sync(item, dest)
 
         # Pass 2: repo → source (files that exist only in repo, e.g. from another device)
         for repo_file in sorted(repo_dir.iterdir()):
@@ -213,4 +218,65 @@ class GenericTarget(SyncTarget):
             elif not source_file.exists():
                 shutil.copy2(repo_file, source_file)
                 log.info("[%s] Copied %s -> source (copy mode)", self.name, repo_file.name)
+                sync_state = get_sync_state()
+                key = self._repo_key(repo_file)
+                sync_state.set_hash(key, repo_file.read_text())
             # If source_file exists as a regular file it was already handled in Pass 1
+
+    def _repo_key(self, repo_file: Path) -> str:
+        """Return the repo-relative path as a stable key for hash storage."""
+        from src.config import DATA_DIR
+        try:
+            return str(repo_file.relative_to(DATA_DIR))
+        except ValueError:
+            return str(repo_file)
+
+    def _three_way_sync(self, source: Path, repo: Path) -> None:
+        """Resolve a content difference using three-way hash comparison.
+
+        Cases:
+        - source_hash == repo_hash: already identical, just ensure hash is stored.
+        - source changed, repo unchanged: copy source → repo.
+        - repo changed, source unchanged: copy repo → source.
+        - both changed: real conflict, delegate to merge_conflicting_file.
+        - no base hash (first sync): source wins, copy source → repo.
+        """
+        sync_state = get_sync_state()
+        key = self._repo_key(repo)
+
+        source_content = source.read_text()
+        repo_content = repo.read_text()
+
+        source_hash = sync_state.compute_hash(source_content)
+        repo_hash = sync_state.compute_hash(repo_content)
+        base_hash = sync_state.get_hash(key)
+
+        if source_hash == repo_hash:
+            # Files are identical — just make sure hash is recorded.
+            if base_hash != source_hash:
+                sync_state.set_hash(key, source_content)
+            return
+
+        if base_hash is None:
+            # First sync: no history — source wins.
+            shutil.copy2(source, repo)
+            log.info("[%s] First sync, source wins: %s", self.name, source.name)
+            sync_state.set_hash(key, source_content)
+            return
+
+        source_changed = source_hash != base_hash
+        repo_changed = repo_hash != base_hash
+
+        if source_changed and not repo_changed:
+            shutil.copy2(source, repo)
+            log.info("[%s] Source updated, copying to repo: %s", self.name, source.name)
+            sync_state.set_hash(key, source_content)
+        elif repo_changed and not source_changed:
+            shutil.copy2(repo, source)
+            log.info("[%s] Repo updated, copying to source: %s", self.name, repo.name)
+            sync_state.set_hash(key, repo_content)
+        else:
+            # Both sides changed — real conflict.
+            merge_conflicting_file(local=source, repo=repo)
+            merged_content = repo.read_text()
+            sync_state.set_hash(key, merged_content)

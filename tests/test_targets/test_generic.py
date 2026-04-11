@@ -260,19 +260,32 @@ class TestAdoptDirectoryCopy:
         # File should not have been created (symlink removed but nothing written)
         assert not (generic_env["repo_dir"] / "orphan.md").exists()
 
-    def test_copy_mode_conflict_calls_merge(self, generic_env, monkeypatch):
-        """copy mode: diverged source and repo files are delegated to merge_conflicting_file."""
+    def test_copy_mode_conflict_calls_merge(self, generic_env, monkeypatch, isolated_sync_state):
+        """copy mode: both-sides-changed triggers merge_conflicting_file (real conflict)."""
         merge_calls = []
 
         def fake_merge(local, repo):
             merge_calls.append((local, repo))
+            # Simulate what merge_conflicting_file does: write merged content to both
+            merged = "<!-- merged -->"
+            repo.write_text(merged)
+            local.write_text(merged)
 
         monkeypatch.setattr("src.targets.generic.merge_conflicting_file", fake_merge)
 
         src_file = generic_env["source"] / "notes.md"
         repo_file = generic_env["repo_dir"] / "notes.md"
-        src_file.write_text("# Source version")
-        repo_file.write_text("# Repo version (different)")
+
+        # Write a known base state and record its hash
+        base_content = "# Base version"
+        src_file.write_text(base_content)
+        repo_file.write_text(base_content)
+        key = str(repo_file.relative_to(generic_env["tmp_repo"]))
+        isolated_sync_state.set_hash(key, base_content)
+
+        # Now both sides diverge independently
+        src_file.write_text("# Source changed")
+        repo_file.write_text("# Repo changed independently")
 
         target = make_target(generic_env, sync_mode="copy")
         target.setup()
@@ -280,6 +293,112 @@ class TestAdoptDirectoryCopy:
         assert len(merge_calls) == 1
         assert merge_calls[0][0] == src_file
         assert merge_calls[0][1] == repo_file
+
+
+class TestThreeWaySync:
+    def test_source_wins_when_only_source_changed(
+        self, generic_env, isolated_sync_state
+    ):
+        """Three-way sync: source changed, repo unchanged → copy source to repo."""
+        src_file = generic_env["source"] / "notes.md"
+        repo_file = generic_env["repo_dir"] / "notes.md"
+
+        base = "# Base"
+        src_file.write_text(base)
+        repo_file.write_text(base)
+        key = str(repo_file.relative_to(generic_env["tmp_repo"]))
+        isolated_sync_state.set_hash(key, base)
+
+        src_file.write_text("# Source updated")
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.setup()
+
+        assert repo_file.read_text() == "# Source updated"
+        assert src_file.read_text() == "# Source updated"
+
+    def test_repo_wins_when_only_repo_changed(self, generic_env, isolated_sync_state):
+        """Three-way sync: repo changed, source unchanged → copy repo to source."""
+        src_file = generic_env["source"] / "notes.md"
+        repo_file = generic_env["repo_dir"] / "notes.md"
+
+        base = "# Base"
+        src_file.write_text(base)
+        repo_file.write_text(base)
+        key = str(repo_file.relative_to(generic_env["tmp_repo"]))
+        isolated_sync_state.set_hash(key, base)
+
+        repo_file.write_text("# Repo updated")
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.setup()
+
+        assert src_file.read_text() == "# Repo updated"
+        assert repo_file.read_text() == "# Repo updated"
+
+    def test_no_action_when_files_match(self, generic_env, isolated_sync_state, monkeypatch):
+        """Three-way sync: identical files → no copy, no merge."""
+        merge_calls = []
+        monkeypatch.setattr(
+            "src.targets.generic.merge_conflicting_file",
+            lambda local, repo: merge_calls.append((local, repo)),
+        )
+
+        content = "# Same content"
+        src_file = generic_env["source"] / "notes.md"
+        repo_file = generic_env["repo_dir"] / "notes.md"
+        src_file.write_text(content)
+        repo_file.write_text(content)
+        key = str(repo_file.relative_to(generic_env["tmp_repo"]))
+        isolated_sync_state.set_hash(key, content)
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.setup()
+
+        assert merge_calls == []
+        assert repo_file.read_text() == content
+
+    def test_source_wins_on_first_sync_no_base_hash(self, generic_env, monkeypatch):
+        """Three-way sync: no base hash (first sync) → source wins, no conflict."""
+        merge_calls = []
+        monkeypatch.setattr(
+            "src.targets.generic.merge_conflicting_file",
+            lambda local, repo: merge_calls.append((local, repo)),
+        )
+
+        src_file = generic_env["source"] / "notes.md"
+        repo_file = generic_env["repo_dir"] / "notes.md"
+        src_file.write_text("# Source content")
+        repo_file.write_text("# Repo content (no base hash)")
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.setup()
+
+        assert merge_calls == []
+        assert repo_file.read_text() == "# Source content"
+
+    def test_hash_stored_after_new_file_copy(self, generic_env, isolated_sync_state):
+        """After copying a new source file to repo, the hash is stored."""
+        src_file = generic_env["source"] / "notes.md"
+        src_file.write_text("# Notes")
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.setup()
+
+        repo_file = generic_env["repo_dir"] / "notes.md"
+        key = str(repo_file.relative_to(generic_env["tmp_repo"]))
+        assert isolated_sync_state.get_hash(key) == isolated_sync_state.compute_hash("# Notes")
+
+    def test_hash_stored_after_repo_to_source_copy(self, generic_env, isolated_sync_state):
+        """After copying a repo-only file to source, the hash is stored."""
+        repo_file = generic_env["repo_dir"] / "remote.md"
+        repo_file.write_text("# Remote")
+
+        target = make_target(generic_env, sync_mode="copy")
+        target.scan()
+
+        key = str(repo_file.relative_to(generic_env["tmp_repo"]))
+        assert isolated_sync_state.get_hash(key) == isolated_sync_state.compute_hash("# Remote")
 
     def test_copy_mode_recurses_into_subdirectories(self, generic_env):
         """copy mode: files in source subdirectories are copied into matching repo subdirs."""

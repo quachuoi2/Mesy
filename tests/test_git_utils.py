@@ -309,3 +309,19 @@ class TestMergeConflictingFile:
         assert "author: local" in result
         # repo-only key is preserved
         assert "date: 2024" in result
+
+    def test_local_and_repo_identical_after_merge(self, tmp_path):
+        """merge_conflicting_file() writes identical content to both local and repo.
+
+        This prevents an infinite commit loop for copy-mode targets where local
+        and repo are separate files: if only repo is written, filecmp.cmp() would
+        return False on the next scan cycle, triggering another merge indefinitely.
+        """
+        local = tmp_path / "local.md"
+        repo = tmp_path / "repo.md"
+        local.write_text("# Local\nLocal content.\n")
+        repo.write_text("# Repo\nRepo content.\n")
+
+        merge_conflicting_file(local=local, repo=repo)
+
+        assert local.read_text() == repo.read_text()

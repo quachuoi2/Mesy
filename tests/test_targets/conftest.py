@@ -6,6 +6,16 @@ from pathlib import Path
 
 import pytest
 
+from src.sync_state import SyncState
+
+
+@pytest.fixture(autouse=True)
+def isolated_sync_state(tmp_path, monkeypatch):
+    """Give each test its own SyncState so hash tracking doesn't bleed between tests."""
+    fresh_state = SyncState(hash_file=tmp_path / ".mesy_sync_hashes.json")
+    monkeypatch.setattr("src.targets.generic.get_sync_state", lambda: fresh_state)
+    return fresh_state
+
 
 @pytest.fixture
 def claude_env(tmp_path, tmp_repo, monkeypatch):

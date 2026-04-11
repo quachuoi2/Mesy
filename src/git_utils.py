@@ -165,4 +165,5 @@ def merge_conflicting_file(local: Path, repo: Path) -> None:
     )
 
     repo.write_text(merged)
+    local.write_text(merged)
     log.info("Conflict-merged %s (both versions preserved)", repo.name)
