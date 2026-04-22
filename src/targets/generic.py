@@ -1,4 +1,4 @@
-"""Generic sync target — flat symlink for OpenClaw and future tools."""
+"""Generic sync target — flat symlink or copy mode for OpenClaw and future tools."""
 
 import filecmp
 import fnmatch
@@ -6,9 +6,8 @@ import logging
 import shutil
 from pathlib import Path
 
-from src.config import DATA_DIR
 from src.git_utils import merge_conflicting_file
-from src.sync_state import get_sync_state
+from src.sync_state import SyncState
 from src.targets.base import SyncTarget
 
 log = logging.getLogger("mesy")
@@ -21,18 +20,29 @@ class GenericTarget(SyncTarget):
         name: str,
         source: Path,
         repo_dir: Path,
+        data_dir: Path | None = None,
         file_patterns: list[str] | None = None,
         exclude: list[str] | None = None,
         sync_mode: str = "symlink",
     ):
+        # Infer data_dir from repo_dir when not explicitly provided (backward compat).
+        resolved_data_dir = data_dir if data_dir is not None else repo_dir.parent
         super().__init__(
             name=name,
             source=source,
             repo_dir=repo_dir,
+            data_dir=resolved_data_dir,
             file_patterns=file_patterns,
             exclude=exclude,
             sync_mode=sync_mode,
         )
+        # Each copy-mode target gets its own SyncState backed by its data repo.
+        if self.sync_mode == "copy":
+            self._sync_state = SyncState(
+                hash_file=self.data_dir / ".mesy_sync_hashes.json"
+            )
+        else:
+            self._sync_state = None
 
     def setup(self) -> None:
         """Initial migration: copy files from source into repo, replace with symlinks or copies."""
@@ -58,10 +68,9 @@ class GenericTarget(SyncTarget):
             self._adopt_directory(self.source, self.repo_dir)
 
     def get_stage_dirs(self) -> list[str]:
-        # Return the repo_subdir relative to DATA_DIR
-        from src.config import DATA_DIR
+        """Return the repo_subdir relative to data_dir for this target."""
         try:
-            rel = self.repo_dir.relative_to(DATA_DIR)
+            rel = self.repo_dir.relative_to(self.data_dir)
             return [str(rel) + "/"]
         except ValueError:
             return [str(self.repo_dir) + "/"]
@@ -187,9 +196,8 @@ class GenericTarget(SyncTarget):
             if not dest.exists():
                 shutil.copy2(item, dest)
                 log.info("[%s] Copied %s -> repo (copy mode)", self.name, item.name)
-                sync_state = get_sync_state()
                 key = self._repo_key(dest)
-                sync_state.set_hash(key, item.read_text())
+                self._sync_state.set_hash(key, item.read_text())
             elif not filecmp.cmp(item, dest, shallow=False):
                 self._three_way_sync(item, dest)
 
@@ -218,16 +226,14 @@ class GenericTarget(SyncTarget):
             elif not source_file.exists():
                 shutil.copy2(repo_file, source_file)
                 log.info("[%s] Copied %s -> source (copy mode)", self.name, repo_file.name)
-                sync_state = get_sync_state()
                 key = self._repo_key(repo_file)
-                sync_state.set_hash(key, repo_file.read_text())
+                self._sync_state.set_hash(key, repo_file.read_text())
             # If source_file exists as a regular file it was already handled in Pass 1
 
     def _repo_key(self, repo_file: Path) -> str:
-        """Return the repo-relative path as a stable key for hash storage."""
-        from src.config import DATA_DIR
+        """Return the data_dir-relative path as a stable key for hash storage."""
         try:
-            return str(repo_file.relative_to(DATA_DIR))
+            return str(repo_file.relative_to(self.data_dir))
         except ValueError:
             return str(repo_file)
 
@@ -241,27 +247,26 @@ class GenericTarget(SyncTarget):
         - both changed: real conflict, delegate to merge_conflicting_file.
         - no base hash (first sync): source wins, copy source → repo.
         """
-        sync_state = get_sync_state()
         key = self._repo_key(repo)
 
         source_content = source.read_text()
         repo_content = repo.read_text()
 
-        source_hash = sync_state.compute_hash(source_content)
-        repo_hash = sync_state.compute_hash(repo_content)
-        base_hash = sync_state.get_hash(key)
+        source_hash = self._sync_state.compute_hash(source_content)
+        repo_hash = self._sync_state.compute_hash(repo_content)
+        base_hash = self._sync_state.get_hash(key)
 
         if source_hash == repo_hash:
             # Files are identical — just make sure hash is recorded.
             if base_hash != source_hash:
-                sync_state.set_hash(key, source_content)
+                self._sync_state.set_hash(key, source_content)
             return
 
         if base_hash is None:
             # First sync: no history — source wins.
             shutil.copy2(source, repo)
             log.info("[%s] First sync, source wins: %s", self.name, source.name)
-            sync_state.set_hash(key, source_content)
+            self._sync_state.set_hash(key, source_content)
             return
 
         source_changed = source_hash != base_hash
@@ -270,13 +275,13 @@ class GenericTarget(SyncTarget):
         if source_changed and not repo_changed:
             shutil.copy2(source, repo)
             log.info("[%s] Source updated, copying to repo: %s", self.name, source.name)
-            sync_state.set_hash(key, source_content)
+            self._sync_state.set_hash(key, source_content)
         elif repo_changed and not source_changed:
             shutil.copy2(repo, source)
             log.info("[%s] Repo updated, copying to source: %s", self.name, repo.name)
-            sync_state.set_hash(key, repo_content)
+            self._sync_state.set_hash(key, repo_content)
         else:
             # Both sides changed — real conflict.
             merge_conflicting_file(local=source, repo=repo)
             merged_content = repo.read_text()
-            sync_state.set_hash(key, merged_content)
+            self._sync_state.set_hash(key, merged_content)

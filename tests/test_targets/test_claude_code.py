@@ -28,7 +28,7 @@ class TestSyncGlobalClaudeMd:
         local_claude = claude_env["claude_dir"] / "CLAUDE.md"
         local_claude.write_text("# Global Config")
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
 
         target = make_target(claude_env)
         target.scan()
@@ -48,7 +48,7 @@ class TestSyncGlobalClaudeMd:
         local_claude = claude_env["claude_dir"] / "CLAUDE.md"
         local_claude.symlink_to(repo_claude)
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
 
         target = make_target(claude_env)
         target.scan()
@@ -63,7 +63,7 @@ class TestSyncGlobalClaudeMd:
         repo_claude = global_dir / "CLAUDE.md"
         repo_claude.write_text("# Repo-only global CLAUDE.md")
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
 
         target = make_target(claude_env)
         target.scan()
@@ -84,7 +84,7 @@ class TestScanProjects:
         memory_dir.mkdir(parents=True)
         (memory_dir / "notes.md").write_text("# Notes")
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: mapping)
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
 
         target = make_target(claude_env)
         target.scan()
@@ -103,7 +103,7 @@ class TestScanProjects:
         memory_dir.mkdir(parents=True)
         (memory_dir / "data.md").write_text("some data")
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
 
         target = make_target(claude_env)
         target.scan()
@@ -122,7 +122,7 @@ class TestScanProjects:
         memory_dir.mkdir(parents=True)
         (memory_dir / "file.md").write_text("content")
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
 
         target = make_target(claude_env)
         target.scan()
@@ -152,7 +152,7 @@ class TestPromotePending:
         shutil.rmtree(str(memory_dir))
         memory_dir.symlink_to(pending_dir)
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: mapping)
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
 
         target = make_target(claude_env)
         target._promote_pending(mapping)
@@ -270,7 +270,7 @@ class TestSafetyVerification:
         def fake_migrate(src, dst):
             pass  # Don't actually copy files
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: mapping)
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
         target = make_target(claude_env)
         monkeypatch.setattr(target, "_migrate_memory_to_dir", fake_migrate)
 
@@ -298,7 +298,7 @@ def make_copy_target(claude_env) -> ClaudeCodeTarget:
 class TestSyncFileCopy:
     def test_local_to_repo_copy(self, claude_env, monkeypatch):
         """_sync_file_copy copies local file to repo when repo is missing."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
         local = claude_env["claude_dir"] / "CLAUDE.md"
@@ -313,7 +313,7 @@ class TestSyncFileCopy:
 
     def test_repo_to_local_copy(self, claude_env, monkeypatch):
         """_sync_file_copy copies repo file to local when local is missing."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
         global_dir = claude_env["repo"] / "claude" / "global"
@@ -329,7 +329,7 @@ class TestSyncFileCopy:
 
     def test_symlink_migrated_to_real_file(self, claude_env, monkeypatch):
         """_sync_file_copy resolves a leftover symlink to a real file."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
         real_file = claude_env["claude_dir"] / "real_content.md"
@@ -349,7 +349,7 @@ class TestSyncFileCopy:
 
     def test_symlink_with_missing_target_restored_from_repo(self, claude_env, monkeypatch):
         """_sync_file_copy replaces broken symlink with copy from repo."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
         local = claude_env["claude_dir"] / "CLAUDE.md"
@@ -373,7 +373,7 @@ class TestSyncFileCopy:
             merge_calls.append((local, repo))
 
         monkeypatch.setattr("src.targets.claude_code.merge_conflicting_file", fake_merge)
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
         local = claude_env["claude_dir"] / "CLAUDE.md"
@@ -391,7 +391,7 @@ class TestSyncFileCopy:
         """_sync_file_copy skips a broken symlink when there is no repo file to restore from."""
         import logging
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
         local = claude_env["claude_dir"] / "CLAUDE.md"
@@ -409,7 +409,7 @@ class TestSyncFileCopy:
 class TestCopyDirFiles:
     def test_copies_all_files_from_source_to_dest(self, claude_env, monkeypatch):
         """_copy_dir_files copies every non-directory file into dest_dir."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
         source_dir = claude_env["repo"] / "claude" / "projects" / "SomeProject"
@@ -427,7 +427,7 @@ class TestCopyDirFiles:
 
     def test_skips_subdirectories(self, claude_env, monkeypatch):
         """_copy_dir_files does not recurse into subdirectories."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
         source_dir = claude_env["repo"] / "claude" / "projects" / "SomeProject"
@@ -453,7 +453,7 @@ class TestCopyDirFiles:
             merge_calls.append((local, repo))
 
         monkeypatch.setattr("src.targets.claude_code.merge_conflicting_file", fake_merge)
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
         source_dir = claude_env["repo"] / "claude" / "projects" / "SomeProject"
@@ -470,7 +470,7 @@ class TestCopyDirFiles:
 
     def test_creates_dest_dir_if_missing(self, claude_env, monkeypatch):
         """_copy_dir_files creates dest_dir when it doesn't exist yet."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
         source_dir = claude_env["repo"] / "claude" / "projects" / "NewProject"
@@ -489,7 +489,7 @@ class TestCopyDirFiles:
 class TestCopyModeGlobalClaudeMd:
     def test_copy_mode_syncs_local_to_repo(self, claude_env, monkeypatch):
         """copy mode: _sync_global_claude_md copies local to repo without symlinking."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         local_claude = claude_env["claude_dir"] / "CLAUDE.md"
         local_claude.write_text("# Global Config")
 
@@ -502,7 +502,7 @@ class TestCopyModeGlobalClaudeMd:
 
     def test_copy_mode_syncs_repo_to_local(self, claude_env, monkeypatch):
         """copy mode: _sync_global_claude_md copies repo to local when local missing."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         repo_claude = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
         repo_claude.write_text("# Repo Config")
 
@@ -526,7 +526,7 @@ class TestCopyModeAdoptProject:
         memory_dir.mkdir(parents=True)
         (memory_dir / "notes.md").write_text("# Notes")
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: mapping)
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
 
         target = make_copy_target(claude_env)
         target.scan()
@@ -546,7 +546,7 @@ class TestCopyModeAdoptProject:
         memory_dir.mkdir(parents=True)
         (memory_dir / "data.md").write_text("some data")
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
 
         target = make_copy_target(claude_env)
         target.scan()
@@ -581,7 +581,7 @@ class TestSymlinkToCopyMigration:
         memory_dir.symlink_to(canonical_dir)
         assert memory_dir.is_symlink()
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: mapping)
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
 
         target = make_copy_target(claude_env)
         target.scan()
@@ -608,7 +608,7 @@ class TestSymlinkToCopyMigration:
         memory_dir.symlink_to(canonical_dir)
         assert memory_dir.is_symlink()
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: mapping)
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
 
         # Use symlink-mode target
         target = make_target(claude_env)
@@ -635,7 +635,7 @@ class TestSymlinkToCopyMigration:
         memory_dir.symlink_to(pending_dest)
         assert memory_dir.is_symlink()
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: {})
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
 
         target = make_copy_target(claude_env)
         target.scan()
@@ -667,7 +667,7 @@ class TestSymlinkToCopyMigration:
         assert memory_dir.is_symlink()
         assert not memory_dir.exists()  # dangling
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: mapping)
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
 
         target = make_copy_target(claude_env)
         with caplog.at_level(logging.WARNING, logger="mesy"):
@@ -702,7 +702,7 @@ class TestSymlinkToCopyMigration:
         assert memory_dir.is_symlink()
         assert not memory_dir.exists()  # dangling
 
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda: mapping)
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
 
         target = make_copy_target(claude_env)
         with caplog.at_level(logging.WARNING, logger="mesy"):

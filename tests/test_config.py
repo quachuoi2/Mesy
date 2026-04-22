@@ -9,9 +9,11 @@ import pytest
 
 import src.config as config_mod
 from src.config import (
+    RepoContext,
     get_mesy_settings,
     load_config,
     load_project_mappings,
+    load_repos,
     load_targets,
 )
 
@@ -192,6 +194,126 @@ class TestSyncMode:
         cfg = load_config()
         targets = load_targets(cfg)
         assert targets[0]["sync_mode"] == "copy"
+
+
+class TestLoadRepos:
+    def test_returns_empty_when_no_repos_conf(self, tmp_repo, monkeypatch):
+        """load_repos() returns [] when repos.conf does not exist."""
+        # tmp_repo patches REPOS_CONF_PATH to tmp_repo/repos.conf which doesn't exist
+        result = load_repos()
+        assert result == []
+
+    def test_parses_valid_repos(self, tmp_path, monkeypatch):
+        """load_repos() returns a list of dicts with name and path for each [repo:*] section."""
+        repo_dir = tmp_path / "DataRepo"
+        repo_dir.mkdir()
+
+        repos_conf = tmp_path / "repos.conf"
+        repos_conf.write_text(
+            "[repo:my-data]\n"
+            f"path = {repo_dir}\n"
+        )
+        monkeypatch.setattr("src.config.REPOS_CONF_PATH", repos_conf)
+
+        result = load_repos()
+        assert len(result) == 1
+        assert result[0]["name"] == "my-data"
+        assert result[0]["path"] == repo_dir
+
+    def test_parses_multiple_repos(self, tmp_path, monkeypatch):
+        """load_repos() returns one entry per [repo:*] section."""
+        dir_a = tmp_path / "A"
+        dir_a.mkdir()
+        dir_b = tmp_path / "B"
+        dir_b.mkdir()
+
+        repos_conf = tmp_path / "repos.conf"
+        repos_conf.write_text(
+            "[repo:alpha]\n"
+            f"path = {dir_a}\n"
+            "\n"
+            "[repo:beta]\n"
+            f"path = {dir_b}\n"
+        )
+        monkeypatch.setattr("src.config.REPOS_CONF_PATH", repos_conf)
+
+        result = load_repos()
+        names = [r["name"] for r in result]
+        assert "alpha" in names
+        assert "beta" in names
+        assert len(result) == 2
+
+    def test_skips_non_existent_path(self, tmp_path, monkeypatch, caplog):
+        """load_repos() skips entries whose path does not exist and logs a warning."""
+        import logging
+
+        repos_conf = tmp_path / "repos.conf"
+        repos_conf.write_text(
+            "[repo:missing]\n"
+            "path = /nonexistent/path/that/does/not/exist\n"
+        )
+        monkeypatch.setattr("src.config.REPOS_CONF_PATH", repos_conf)
+
+        with caplog.at_level(logging.WARNING, logger="mesy"):
+            result = load_repos()
+
+        assert result == []
+        assert any("missing" in r.message for r in caplog.records)
+
+    def test_skips_section_without_path(self, tmp_path, monkeypatch, caplog):
+        """load_repos() skips [repo:*] sections that have no 'path' key."""
+        import logging
+
+        repos_conf = tmp_path / "repos.conf"
+        repos_conf.write_text("[repo:empty-section]\n")
+        monkeypatch.setattr("src.config.REPOS_CONF_PATH", repos_conf)
+
+        with caplog.at_level(logging.WARNING, logger="mesy"):
+            result = load_repos()
+
+        assert result == []
+
+    def test_ignores_non_repo_sections(self, tmp_path, monkeypatch):
+        """load_repos() only reads [repo:*] sections, ignoring others."""
+        repo_dir = tmp_path / "DataRepo"
+        repo_dir.mkdir()
+
+        repos_conf = tmp_path / "repos.conf"
+        repos_conf.write_text(
+            "[general]\n"
+            "some_key = some_value\n"
+            "\n"
+            "[repo:real]\n"
+            f"path = {repo_dir}\n"
+        )
+        monkeypatch.setattr("src.config.REPOS_CONF_PATH", repos_conf)
+
+        result = load_repos()
+        assert len(result) == 1
+        assert result[0]["name"] == "real"
+
+
+class TestRepoContext:
+    def test_instantiation_with_required_fields(self, tmp_path):
+        """RepoContext can be created with name and data_dir; targets/stage_dirs default empty."""
+        ctx = RepoContext(name="test-repo", data_dir=tmp_path)
+        assert ctx.name == "test-repo"
+        assert ctx.data_dir == tmp_path
+        assert ctx.targets == []
+        assert ctx.stage_dirs == []
+
+    def test_instantiation_with_all_fields(self, tmp_path):
+        """RepoContext stores targets and stage_dirs when provided."""
+        from unittest.mock import MagicMock
+        mock_target = MagicMock()
+        ctx = RepoContext(
+            name="full-repo",
+            data_dir=tmp_path,
+            targets=[mock_target],
+            stage_dirs=["global/", "projects/"],
+        )
+        assert len(ctx.targets) == 1
+        assert ctx.stage_dirs == ["global/", "projects/"]
 
 
 class TestLoadProjectMappings:

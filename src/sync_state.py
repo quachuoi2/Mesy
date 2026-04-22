@@ -7,18 +7,19 @@ import json
 import logging
 from pathlib import Path
 
-from src.config import DATA_DIR
-
 log = logging.getLogger("mesy")
-
-_HASH_FILE = DATA_DIR / ".mesy_sync_hashes.json"
 
 
 class SyncState:
-    """Persist content hashes so three-way sync can tell who changed a file."""
+    """Persist content hashes so three-way sync can tell who changed a file.
 
-    def __init__(self, hash_file: Path | None = None) -> None:
-        self._path = hash_file or _HASH_FILE
+    Each instance is backed by an explicit hash file path.  There is no longer
+    a module-level singleton — callers are responsible for constructing a
+    SyncState with the appropriate hash_file for their data repo.
+    """
+
+    def __init__(self, hash_file: Path) -> None:
+        self._path = hash_file
         self._hashes: dict[str, str] = {}
         self.load()
 
@@ -45,14 +46,3 @@ class SyncState:
     def set_hash(self, filepath: str, content: str) -> None:
         self._hashes[filepath] = self.compute_hash(content)
         self.save()
-
-
-# Module-level singleton — shared across all targets in this process.
-_state: SyncState | None = None
-
-
-def get_sync_state() -> SyncState:
-    global _state
-    if _state is None:
-        _state = SyncState()
-    return _state

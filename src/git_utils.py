@@ -6,34 +6,35 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import DATA_DIR, REPO_DIR
+from src.config import REPO_DIR
 
 log = logging.getLogger("mesy")
 
 
-def git(*args: str, check: bool = False) -> subprocess.CompletedProcess:
-    cmd = ["git", "-C", str(DATA_DIR)] + list(args)
+def git(*args: str, data_dir: Path, check: bool = False) -> subprocess.CompletedProcess:
+    cmd = ["git", "-C", str(data_dir)] + list(args)
     log.debug("git %s", " ".join(args))
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=check)
 
 
-def has_local_changes() -> bool:
-    result = git("status", "--porcelain")
+def has_local_changes(data_dir: Path) -> bool:
+    result = git("status", "--porcelain", data_dir=data_dir)
     return bool(result.stdout.strip())
 
 
-def commit_and_push(stage_dirs: list[str]) -> None:
+def commit_and_push(stage_dirs: list[str], data_dir: Path) -> None:
     """Stage changes, commit, rebase-pull, push.
 
     Args:
         stage_dirs: directories to git-add.
+        data_dir: root of the git repo to operate on.
     """
-    if not has_local_changes():
+    if not has_local_changes(data_dir):
         return
 
-    git("add", *stage_dirs)
+    git("add", *stage_dirs, data_dir=data_dir)
 
-    result = git("diff", "--cached", "--quiet")
+    result = git("diff", "--cached", "--quiet", data_dir=data_dir)
     if result.returncode == 0:
         return
 
@@ -41,7 +42,7 @@ def commit_and_push(stage_dirs: list[str]) -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # List changed files for the commit message
-    name_status = git("diff", "--cached", "--name-status")
+    name_status = git("diff", "--cached", "--name-status", data_dir=data_dir)
     changed_lines = []
     for line in name_status.stdout.strip().splitlines():
         parts = line.split("\t", 1)
@@ -53,35 +54,35 @@ def commit_and_push(stage_dirs: list[str]) -> None:
     msg = f"sync from {hostname} at {now}"
     if changed_lines:
         msg += "\n\n" + "\n".join(changed_lines)
-    commit_result = git("commit", "-m", msg)
+    commit_result = git("commit", "-m", msg, data_dir=data_dir)
     if commit_result.returncode != 0:
         log.warning("commit failed: %s", commit_result.stderr)
         return
 
     log.info("Committed: %s", msg)
 
-    pull_result = git("pull", "--rebase", "origin", "main")
+    pull_result = git("pull", "--rebase", "origin", "main", data_dir=data_dir)
     if pull_result.returncode != 0:
         log.warning("pull --rebase failed, attempting conflict resolution")
-        resolve_conflicts()
+        resolve_conflicts(data_dir)
 
-    push_result = git("push", "origin", "main")
+    push_result = git("push", "origin", "main", data_dir=data_dir)
     if push_result.returncode != 0:
         log.warning("push failed (offline?): %s", push_result.stderr)
 
 
-def resolve_conflicts() -> None:
+def resolve_conflicts(data_dir: Path) -> None:
     """Handle rebase conflicts by keeping both versions."""
-    result = git("diff", "--name-only", "--diff-filter=U")
+    result = git("diff", "--name-only", "--diff-filter=U", data_dir=data_dir)
     if not result.stdout.strip():
-        cont = git("rebase", "--continue")
+        cont = git("rebase", "--continue", data_dir=data_dir)
         if cont.returncode != 0:
-            git("rebase", "--abort")
+            git("rebase", "--abort", data_dir=data_dir)
         return
 
     conflicted = result.stdout.strip().split("\n")
     for filepath in conflicted:
-        full_path = DATA_DIR / filepath
+        full_path = data_dir / filepath
         if not full_path.exists():
             continue
 
@@ -116,14 +117,14 @@ def resolve_conflicts() -> None:
                 resolved_text = f"---\nconflict: true\n{parts[1]}---\n{parts[2]}"
 
         full_path.write_text(resolved_text)
-        git("add", filepath)
+        git("add", filepath, data_dir=data_dir)
 
-    git("rebase", "--continue")
+    git("rebase", "--continue", data_dir=data_dir)
 
 
-def pull_remote() -> None:
+def pull_remote(data_dir: Path) -> None:
     """Pull remote changes (fast-forward or rebase)."""
-    result = git("pull", "--rebase", "origin", "main")
+    result = git("pull", "--rebase", "origin", "main", data_dir=data_dir)
     if result.returncode == 0 and "Already up to date" not in result.stdout:
         log.info("Pulled remote changes")
     elif result.returncode != 0:

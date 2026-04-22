@@ -7,7 +7,7 @@ import socket
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import DATA_DIR, load_project_mappings
+from src.config import load_project_mappings
 from src.git_utils import merge_conflicting_file
 from src.targets.base import SyncTarget
 
@@ -15,7 +15,6 @@ log = logging.getLogger("mesy")
 
 CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
-PENDING_DIR = DATA_DIR / "claude" / "projects" / ".pending"
 
 
 class ClaudeCodeTarget(SyncTarget):
@@ -24,6 +23,7 @@ class ClaudeCodeTarget(SyncTarget):
         self,
         source: Path,
         repo_dir: Path,
+        data_dir: Path | None = None,
         claude_dir: Path | None = None,
         projects_dir: Path | None = None,
         pending_dir: Path | None = None,
@@ -31,16 +31,23 @@ class ClaudeCodeTarget(SyncTarget):
         sync_mode: str = "symlink",
         **kwargs,
     ):
+        # Infer data_dir from repo_dir when not provided (backward compat).
+        if data_dir is None:
+            from src.config import DATA_DIR  # imported dynamically so tests can patch it
+            resolved_data_dir = DATA_DIR
+        else:
+            resolved_data_dir = data_dir
         super().__init__(
             name="claude-code",
             source=source,
             repo_dir=repo_dir,
+            data_dir=resolved_data_dir,
             file_patterns=["*.md"],
             sync_mode=sync_mode,
         )
         self.claude_dir = claude_dir or CLAUDE_DIR
         self.projects_dir = projects_dir or PROJECTS_DIR
-        self.repo_base = repo_base or DATA_DIR
+        self.repo_base = repo_base or self.data_dir
         self.pending_dir = pending_dir or (self.repo_base / "claude" / "projects" / ".pending")
 
     def setup(self) -> None:
@@ -54,7 +61,7 @@ class ClaudeCodeTarget(SyncTarget):
         if not self.projects_dir.exists():
             return
 
-        mapping = load_project_mappings()
+        mapping = load_project_mappings(data_dir=self.data_dir)
         self._migrate_repo_to_canonical(mapping)
         self._promote_pending(mapping)
         self._scan_projects(mapping)
@@ -68,7 +75,7 @@ class ClaudeCodeTarget(SyncTarget):
             paths.append(self.projects_dir)
         return paths
 
-    # -- internal methods (moved from sync.py) --
+    # -- internal methods --
 
     def _sync_global_claude_md(self) -> None:
         """Migrate and sync the global ~/.claude/CLAUDE.md."""
@@ -199,7 +206,6 @@ class ClaudeCodeTarget(SyncTarget):
             claude_memory = self.projects_dir / raw_name / "memory"
             if claude_memory.exists() and not claude_memory.is_symlink():
                 if self.sync_mode == "copy":
-                    # Copy mode: copy canonical files back into the real memory dir
                     self._copy_dir_files(canonical_dir, claude_memory)
                     log.info(
                         "Synced canonical files back to memory dir (copy mode): %s -> %s",
@@ -251,14 +257,11 @@ class ClaudeCodeTarget(SyncTarget):
                 canonical_dir = self.repo_base / "claude" / "projects" / canonical
                 self._migrate_memory_to_dir(memory_dir, canonical_dir)
 
-                # Verify all files migrated before deleting
                 if not self._verify_migration(memory_dir, canonical_dir):
                     log.error("Migration verification failed for %s, skipping rmtree", raw_name)
                     continue
 
                 if self.sync_mode == "copy":
-                    # Copy mode: files are already mirrored into canonical_dir by
-                    # _migrate_memory_to_dir; leave memory_dir as a real directory.
                     log.info(
                         "Adopted project memory (copy mode): %s -> %s", raw_name, canonical
                     )
@@ -292,7 +295,6 @@ class ClaudeCodeTarget(SyncTarget):
                         continue
 
                     if self.sync_mode == "copy":
-                        # Copy mode: keep memory_dir; files are already mirrored into pending_dest
                         log.warning(
                             "Unmapped project memory: %s — staged in .pending/ (copy mode). "
                             "Add a mapping in projects.conf to assign a canonical name.",
@@ -316,7 +318,6 @@ class ClaudeCodeTarget(SyncTarget):
         - repo exists, local missing → copy repo → local
         - both exist with different content → delegate to merge_conflicting_file
         """
-        # Migrate leftover symlink in local position
         if local.is_symlink():
             real_content = local.resolve()
             local.unlink()

@@ -4,3 +4,5 @@ __pycache__/
 .sync.pid
 .env
 todo/
+
+repos.conf

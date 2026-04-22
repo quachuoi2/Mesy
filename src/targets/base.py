@@ -14,7 +14,8 @@ class SyncTarget(ABC):
 
     name: str
     source: Path          # tool's directory (e.g. ~/.openclaw/workspace)
-    repo_dir: Path        # subdirectory in Mesy repo (e.g. Mesy/openclaw/main)
+    repo_dir: Path        # subdirectory in the data repo (e.g. AlfredMemory/openclaw/main)
+    data_dir: Path        # root of the data repo this target belongs to
     file_patterns: list[str]
     exclude: list[str]
 
@@ -23,6 +24,7 @@ class SyncTarget(ABC):
         name: str,
         source: Path,
         repo_dir: Path,
+        data_dir: Path | None = None,
         file_patterns: list[str] | None = None,
         exclude: list[str] | None = None,
         sync_mode: str = "symlink",
@@ -30,6 +32,7 @@ class SyncTarget(ABC):
         self.name = name
         self.source = source
         self.repo_dir = repo_dir
+        self.data_dir = data_dir if data_dir is not None else repo_dir.parent
         self.file_patterns = file_patterns or ["*.md"]
         self.exclude = exclude or []
         self.sync_mode = sync_mode
@@ -50,5 +53,5 @@ class SyncTarget(ABC):
 
     @abstractmethod
     def get_stage_dirs(self) -> list[str]:
-        """Return git-add paths relative to REPO_DIR for this target."""
+        """Return git-add paths relative to data_dir for this target."""
         ...

@@ -20,7 +20,7 @@ from src.git_utils import (
 
 class TestGitHelper:
     def test_git_passes_correct_args(self, tmp_repo, monkeypatch):
-        """git() constructs the command with -C REPO_DIR."""
+        """git() constructs the command with -C data_dir."""
         captured = []
 
         def fake_run(cmd, **kwargs):
@@ -30,7 +30,7 @@ class TestGitHelper:
         monkeypatch.setattr("subprocess.run", fake_run)
 
         from src.git_utils import git
-        git("status", "--porcelain")
+        git("status", "--porcelain", data_dir=tmp_repo)
 
         assert captured[0][0] == "git"
         assert captured[0][1] == "-C"
@@ -49,7 +49,7 @@ class TestGitHelper:
         monkeypatch.setattr("subprocess.run", fake_run)
 
         from src.git_utils import git
-        git("log")
+        git("log", data_dir=tmp_repo)
 
         assert kwargs_captured.get("timeout") == 30
 
@@ -61,7 +61,7 @@ class TestHasLocalChanges:
             "subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, " M some_file.md", ""),
         )
-        assert has_local_changes() is True
+        assert has_local_changes(data_dir=tmp_repo) is True
 
     def test_returns_false_when_clean(self, tmp_repo, monkeypatch):
         """has_local_changes() returns False when porcelain output is empty."""
@@ -69,7 +69,7 @@ class TestHasLocalChanges:
             "subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
         )
-        assert has_local_changes() is False
+        assert has_local_changes(data_dir=tmp_repo) is False
 
 
 class TestCommitAndPush:
@@ -92,7 +92,7 @@ class TestCommitAndPush:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        commit_and_push(["claude/global/", "claude/projects/"])
+        commit_and_push(["claude/global/", "claude/projects/"], data_dir=tmp_repo)
 
         git_subcommands = [c[3] for c in commands if c[0] == "git"]
         assert "add" in git_subcommands
@@ -115,7 +115,7 @@ class TestCommitAndPush:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        commit_and_push(["global/"])
+        commit_and_push(["global/"], data_dir=tmp_repo)
 
         # Only the status check should have run
         git_subcommands = [c[3] for c in commands if c[0] == "git"]
@@ -139,9 +139,32 @@ class TestCommitAndPush:
         monkeypatch.setattr("subprocess.run", fake_run)
 
         with caplog.at_level(logging.WARNING, logger="mesy"):
-            commit_and_push(["global/"])
+            commit_and_push(["global/"], data_dir=tmp_repo)
 
         assert any("push failed" in r.message for r in caplog.records)
+
+    def test_uses_provided_data_dir(self, tmp_path, monkeypatch):
+        """commit_and_push() passes the provided data_dir to git, not the global DATA_DIR."""
+        custom_data_dir = tmp_path / "CustomRepo"
+        custom_data_dir.mkdir()
+
+        used_dirs = []
+
+        def fake_run(cmd, **kw):
+            if cmd[0] == "git":
+                used_dirs.append(cmd[2])  # -C <dir>
+            if "status" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, "M file.md", "")
+            if "diff" in cmd and "--cached" in cmd and "--name-status" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, "M\tfile.md\n", "")
+            if "diff" in cmd and "--cached" in cmd and "--quiet" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "", "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+        commit_and_push(["global/"], data_dir=custom_data_dir)
+
+        assert all(d == str(custom_data_dir) for d in used_dirs)
 
 
 class TestResolveConflicts:
@@ -156,7 +179,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        resolve_conflicts()
+        resolve_conflicts(data_dir=tmp_repo)
 
         subcommands = [c[3:] for c in commands if c[0] == "git"]
         assert ["rebase", "--continue"] in subcommands
@@ -174,7 +197,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        resolve_conflicts()
+        resolve_conflicts(data_dir=tmp_repo)
 
         subcommands = [c[3:] for c in commands if c[0] == "git"]
         assert ["rebase", "--abort"] in subcommands
@@ -195,7 +218,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        resolve_conflicts()
+        resolve_conflicts(data_dir=tmp_repo)
 
         content = conflicted_file.read_text()
         assert "<<<<<<<" not in content
@@ -218,7 +241,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        resolve_conflicts()
+        resolve_conflicts(data_dir=tmp_repo)
 
         subcommands = [c[3:] for c in commands if c[0] == "git"]
         assert ["rebase", "--continue"] in subcommands
@@ -235,7 +258,7 @@ class TestPullRemote:
         )
 
         with caplog.at_level(logging.INFO, logger="mesy"):
-            pull_remote()
+            pull_remote(data_dir=tmp_repo)
 
         assert any("Pulled" in r.message for r in caplog.records)
 
@@ -249,7 +272,7 @@ class TestPullRemote:
         )
 
         with caplog.at_level(logging.DEBUG, logger="mesy"):
-            pull_remote()  # must not raise
+            pull_remote(data_dir=tmp_repo)  # must not raise
 
         assert any("pull failed" in r.message for r in caplog.records)
 

@@ -15,6 +15,7 @@ def make_target(env, **kwargs) -> GenericTarget:
         name="test",
         source=env["source"],
         repo_dir=env["repo_dir"],
+        data_dir=env["tmp_repo"],
     )
     defaults.update(kwargs)
     return GenericTarget(**defaults)
@@ -440,13 +441,17 @@ class TestGetStageDirs:
         assert stage_dirs == ["openclaw/main/"]
 
     def test_falls_back_to_absolute_when_not_under_repo_dir(self, generic_env, tmp_path):
-        """get_stage_dirs() uses absolute path when repo_dir is outside REPO_DIR."""
+        """get_stage_dirs() uses absolute path when repo_dir is outside data_dir."""
         outside_dir = tmp_path / "elsewhere"
         outside_dir.mkdir()
+        # data_dir must be explicitly set to something that does NOT contain outside_dir
+        unrelated_data_dir = tmp_path / "unrelated_data"
+        unrelated_data_dir.mkdir()
         target = GenericTarget(
             name="test",
             source=generic_env["source"],
             repo_dir=outside_dir,
+            data_dir=unrelated_data_dir,
         )
         stage_dirs = target.get_stage_dirs()
         assert stage_dirs == [str(outside_dir) + "/"]

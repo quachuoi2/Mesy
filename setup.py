@@ -471,6 +471,8 @@ def load_sync_conf_targets() -> list[dict]:
         else:
             tdef["exclude"] = []
 
+        tdef["sync_mode"] = cfg.get(section, "sync_mode", fallback="symlink").strip()
+
         targets.append(tdef)
 
     return targets
@@ -580,15 +582,23 @@ def main() -> None:
 
     # Setup generic targets from config
     for tdef in target_defs:
-        if tdef["type"] == "generic":
-            print(f"\n--- {tdef['name']} ---")
-            setup_generic_target(
-                name=tdef["name"],
-                source=tdef["source"],
-                repo_subdir=tdef["repo_subdir"],
-                file_patterns=tdef["file_patterns"],
-                exclude=tdef["exclude"],
+        if tdef["type"] != "generic":
+            continue
+        if tdef.get("sync_mode") == "copy":
+            log(
+                "info",
+                f"[{tdef['name']}] Copy-mode target — skipping symlink setup. "
+                "Will be initialized on first daemon run.",
             )
+            continue
+        print(f"\n--- {tdef['name']} ---")
+        setup_generic_target(
+            name=tdef["name"],
+            source=tdef["source"],
+            repo_subdir=tdef["repo_subdir"],
+            file_patterns=tdef["file_patterns"],
+            exclude=tdef["exclude"],
+        )
 
     install_daemon()
 
