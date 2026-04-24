@@ -20,9 +20,9 @@ from src.config import (
 
 class TestLoadConfig:
     def test_defaults_when_conf_missing(self, tmp_repo, monkeypatch):
-        """load_config() returns defaults when sync.conf does not exist."""
+        """load_config(tmp_repo) returns defaults when sync.conf does not exist."""
         # tmp_repo already patches CONFIG_PATH to a non-existent path
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         settings = get_mesy_settings(cfg)
         assert settings["debounce_seconds"] == "30"
         assert settings["pull_interval_seconds"] == "60"
@@ -32,7 +32,7 @@ class TestLoadConfig:
         """Custom [mesy] values override defaults."""
         conf = tmp_repo / "sync.conf"
         conf.write_text("[mesy]\ndebounce_seconds = 10\npull_interval_seconds = 120\n")
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         settings = get_mesy_settings(cfg)
         assert settings["debounce_seconds"] == "10"
         assert settings["pull_interval_seconds"] == "120"
@@ -48,7 +48,7 @@ class TestLoadConfig:
             "repo_subdir = claude/projects\n"
             "mapping_conf = claude/projects.conf\n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         targets = load_targets(cfg)
         assert len(targets) == 1
         assert targets[0]["type"] == "claude-code"
@@ -63,7 +63,7 @@ class TestLoadConfig:
             "source = /tmp/workspace\n"
             "repo_subdir = openclaw/main\n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         targets = load_targets(cfg)
         assert len(targets) == 1
         assert targets[0]["type"] == "generic"
@@ -78,7 +78,7 @@ class TestLoadConfig:
             "repo_subdir = openclaw/main\n"
             "file_patterns = *.md, *.txt\n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         targets = load_targets(cfg)
         assert targets[0]["file_patterns"] == ["*.md", "*.txt"]
 
@@ -90,7 +90,7 @@ class TestLoadConfig:
             "source = /tmp/workspace\n"
             "repo_subdir = openclaw/main\n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         targets = load_targets(cfg)
         assert targets[0]["file_patterns"] == ["*.md"]
 
@@ -103,7 +103,7 @@ class TestLoadConfig:
             "repo_subdir = openclaw/main\n"
             "exclude = TOOLS.md, HEARTBEAT.md\n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         targets = load_targets(cfg)
         assert targets[0]["exclude"] == ["TOOLS.md", "HEARTBEAT.md"]
 
@@ -117,7 +117,7 @@ class TestSyncMode:
             "source = /tmp/workspace\n"
             "repo_subdir = openclaw/main\n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         targets = load_targets(cfg)
         assert targets[0]["sync_mode"] == "symlink"
 
@@ -130,7 +130,7 @@ class TestSyncMode:
             "repo_subdir = openclaw/main\n"
             "sync_mode = copy\n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         targets = load_targets(cfg)
         assert targets[0]["sync_mode"] == "copy"
 
@@ -143,7 +143,7 @@ class TestSyncMode:
             "repo_subdir = openclaw/main\n"
             "sync_mode = symlink\n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         targets = load_targets(cfg)
         assert targets[0]["sync_mode"] == "symlink"
 
@@ -158,7 +158,7 @@ class TestSyncMode:
             "repo_subdir = openclaw/main\n"
             "sync_mode = hardlink\n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         with caplog.at_level(logging.WARNING, logger="mesy"):
             targets = load_targets(cfg)
 
@@ -176,7 +176,7 @@ class TestSyncMode:
             "repo_subdir = openclaw/main\n"
             "sync_mode = rsync\n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         with caplog.at_level(logging.WARNING, logger="mesy"):
             load_targets(cfg)
 
@@ -191,7 +191,7 @@ class TestSyncMode:
             "repo_subdir = openclaw/main\n"
             "sync_mode =  copy  \n"
         )
-        cfg = load_config()
+        cfg = load_config(tmp_repo)
         targets = load_targets(cfg)
         assert targets[0]["sync_mode"] == "copy"
 
@@ -324,11 +324,11 @@ class TestLoadProjectMappings:
             "[Workspace]\n"
             "paths = -home-user-Workspace, -home-user2-Workspace\n"
         )
-        mappings = load_project_mappings()
+        mappings = load_project_mappings(tmp_repo)
         assert mappings["-home-user-Workspace"] == "Workspace"
         assert mappings["-home-user2-Workspace"] == "Workspace"
 
     def test_missing_projects_conf(self, tmp_repo):
-        """load_project_mappings() returns empty dict when projects.conf missing."""
-        mappings = load_project_mappings()
+        """load_project_mappings(tmp_repo) returns empty dict when projects.conf missing."""
+        mappings = load_project_mappings(tmp_repo)
         assert mappings == {}

@@ -15,6 +15,7 @@ def make_target(claude_env) -> ClaudeCodeTarget:
     return ClaudeCodeTarget(
         source=claude_env["projects_dir"],
         repo_dir=claude_env["repo"] / "claude" / "projects",
+        data_dir=claude_env["repo"],
         claude_dir=claude_env["claude_dir"],
         projects_dir=claude_env["projects_dir"],
         pending_dir=claude_env["pending_dir"],
@@ -288,6 +289,7 @@ def make_copy_target(claude_env) -> ClaudeCodeTarget:
     return ClaudeCodeTarget(
         source=claude_env["projects_dir"],
         repo_dir=claude_env["repo"] / "claude" / "projects",
+        data_dir=claude_env["repo"],
         claude_dir=claude_env["claude_dir"],
         projects_dir=claude_env["projects_dir"],
         pending_dir=claude_env["pending_dir"],

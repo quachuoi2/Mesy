@@ -125,7 +125,7 @@ class TestGetMdMtimes:
         (tmp_repo / "notes.md").write_text("# Notes")
         (tmp_repo / "claude" / "global" / "CLAUDE.md").write_text("# Global")
 
-        result = get_md_mtimes()
+        result = get_md_mtimes(tmp_repo)
 
         assert any("notes.md" in k for k in result)
         assert any("CLAUDE.md" in k for k in result)
@@ -140,7 +140,7 @@ class TestGetMdMtimes:
         (tmp_repo / ".git" / "hidden.md").write_text("should be ignored")
         (tmp_repo / "visible.md").write_text("should appear")
 
-        result = get_md_mtimes()
+        result = get_md_mtimes(tmp_repo)
 
         assert not any(".git" in k for k in result)
         assert any("visible.md" in k for k in result)
@@ -150,7 +150,7 @@ class TestGetMdMtimes:
         (tmp_repo / "readme.txt").write_text("text file")
         (tmp_repo / "data.md").write_text("# Data")
 
-        result = get_md_mtimes()
+        result = get_md_mtimes(tmp_repo)
 
         assert not any("readme.txt" in k for k in result)
         assert any("data.md" in k for k in result)
@@ -537,6 +537,12 @@ class TestMain:
         # Prevent the watchdog/polling loop from running
         monkeypatch.setattr("src.main.run_with_watchdog", lambda *a, **kw: None)
         monkeypatch.setattr("src.main.run_with_polling", lambda *a, **kw: None)
+
+        # repos.conf is required — point it at tmp_repo.
+        monkeypatch.setattr(
+            "src.main.load_repos",
+            lambda: [{"name": "default", "path": tmp_repo}],
+        )
 
         from src.main import main
         main()

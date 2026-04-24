@@ -9,8 +9,8 @@ Git-backed daemon syncing AI tool memory files across devices via GitHub.
 | Language | Python 3 |
 | Venv | `.venv/` (always activate before running anything) |
 | Entry point | `sync.py` → `src.main` |
-| Data dir | Sibling `../AlfredMemory/` (or `MESY_DATA_DIR` env var) |
-| Config | `sync.conf` in data dir |
+| Repo list | `repos.conf` at repo root — **required**, lists all data repos |
+| Per-repo config | `sync.conf` inside each data repo |
 | Daemon | systemd user service (`mesy.service`) |
 
 ## Commands
@@ -39,8 +39,8 @@ Mesy/
 ├── setup.py                   # One-time onboarding (symlinks, daemon install)
 ├── mesy.service               # systemd unit file
 ├── src/
-│   ├── main.py                # Daemon loop (watchdog or polling)
-│   ├── config.py              # Config loading, DATA_DIR / REPO_DIR
+│   ├── main.py                # Daemon loop (watchdog or polling), multi-repo
+│   ├── config.py              # repos.conf + per-repo sync.conf loading
 │   ├── git_utils.py           # Git operations, conflict resolution
 │   ├── sync_state.py          # Content hash tracking for three-way sync
 │   └── targets/
@@ -62,10 +62,10 @@ Mesy/
 
 ## Architecture
 
-- **REPO_DIR** = this repo (Mesy code)
-- **DATA_DIR** = AlfredMemory repo (synced data, separate git repo)
-- `sync.conf` lives in DATA_DIR, defines targets and timing
-- Each target syncs files between a `source` (tool's directory) and `repo_dir` (subdir in DATA_DIR)
+- **REPO_DIR** = this repo (Mesy code); `repos.conf` lives here at the root
+- **repos.conf** = list of `[repo:<name>]` sections, each with a `path = <data_repo>` key. **Required** — the daemon exits if it is missing or empty
+- Each data repo is an independent git repo (e.g. AlfredMemory) containing its own `sync.conf`
+- `sync.conf` defines `[mesy]` timing settings and `[target:*]` sections; each target syncs files between a `source` (tool's directory) and `repo_dir` (subdir in the data repo)
 
 ### Sync modes
 
@@ -99,8 +99,8 @@ Uses `src/sync_state.py` to store content hashes after each successful sync. On 
 
 ## Testing Notes
 
-- All fixtures in `conftest.py` — `tmp_repo` patches `DATA_DIR` and `REPO_DIR`
+- All fixtures in `conftest.py` — `tmp_repo` patches `REPO_DIR` and `REPOS_CONF_PATH` and returns a tmp data repo dir; `tmp_multi_repo` sets up two independent data repos for multi-repo tests
 - `isolated_sync_state` fixture (autouse) ensures hash state isolation between tests
-- `DATA_DIR` must be imported dynamically inside methods that need the patched value (e.g., `from src.config import DATA_DIR` inside method body, not at module top level)
+- `load_config(data_dir)` and `load_project_mappings(data_dir)` now require an explicit `data_dir`; pass the `tmp_repo` fixture value from tests
 - Test conflict resolution with prepared conflict files
 - Use `tmp_path` for filesystem tests

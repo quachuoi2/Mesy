@@ -23,7 +23,7 @@ class ClaudeCodeTarget(SyncTarget):
         self,
         source: Path,
         repo_dir: Path,
-        data_dir: Path | None = None,
+        data_dir: Path,
         claude_dir: Path | None = None,
         projects_dir: Path | None = None,
         pending_dir: Path | None = None,
@@ -31,17 +31,11 @@ class ClaudeCodeTarget(SyncTarget):
         sync_mode: str = "symlink",
         **kwargs,
     ):
-        # Infer data_dir from repo_dir when not provided (backward compat).
-        if data_dir is None:
-            from src.config import DATA_DIR  # imported dynamically so tests can patch it
-            resolved_data_dir = DATA_DIR
-        else:
-            resolved_data_dir = data_dir
         super().__init__(
             name="claude-code",
             source=source,
             repo_dir=repo_dir,
-            data_dir=resolved_data_dir,
+            data_dir=data_dir,
             file_patterns=["*.md"],
             sync_mode=sync_mode,
         )

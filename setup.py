@@ -3,6 +3,11 @@
 
 Run from inside the cloned Mesy repo on any new system:
     python setup.py
+
+Walks the user through registering one or more data repos in
+`REPO_DIR/repos.conf`, performs the initial filesystem migration
+(Claude Code symlinks + generic targets) for each repo scoped to its
+own `sync.conf`, and installs the background daemon.
 """
 
 import filecmp
@@ -16,7 +21,10 @@ from configparser import ConfigParser
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.config import load_project_mappings, load_repos
+
 REPO_DIR = Path(__file__).resolve().parent
+REPOS_CONF_PATH = REPO_DIR / "repos.conf"
 IS_WINDOWS = platform.system() == "Windows"
 
 if IS_WINDOWS:
@@ -25,111 +33,219 @@ else:
     CLAUDE_DIR = Path.home() / ".claude"
 
 
-def _load_dotenv() -> None:
-    """Load REPO_DIR/.env into os.environ, skipping keys already set in the environment."""
-    env_file = REPO_DIR / ".env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if key and key not in os.environ:
-            os.environ[key] = value
+SYNC_CONF_TEMPLATE = """\
+# Mesy per-repo sync config. See docs for full options.
 
+[mesy]
+debounce_seconds = 30
+pull_interval_seconds = 60
+scan_interval_seconds = 60
 
-_load_dotenv()
-
-
-def _resolve_data_dir() -> Path:
-    """Resolve DATA_DIR in priority order:
-    1. MESY_DATA_DIR env var (if set and points to a valid directory)
-    2. Sibling ../Mesy-Data relative to REPO_DIR
-    3. REPO_DIR (backwards compat fallback)
-    """
-    env_val = os.environ.get("MESY_DATA_DIR", "").strip()
-    if env_val:
-        candidate = Path(env_val).expanduser().resolve()
-        if candidate.is_dir():
-            return candidate
-        print(f"[warn] MESY_DATA_DIR={env_val} is not a valid directory, ignoring")
-
-    sibling = (REPO_DIR / ".." / "Mesy-Data").resolve()
-    if sibling.is_dir():
-        return sibling
-
-    return REPO_DIR
-
-
-DATA_DIR = _resolve_data_dir()
-PROJECTS_CONF_PATH = DATA_DIR / "claude" / "projects.conf"
-
-
-def _write_data_dir_to_env(path: Path) -> None:
-    """Persist MESY_DATA_DIR into REPO_DIR/.env, overwriting any existing line."""
-    env_file = REPO_DIR / ".env"
-    new_line = f"MESY_DATA_DIR={path}"
-
-    if env_file.exists():
-        lines = env_file.read_text().splitlines()
-        updated = False
-        new_lines = []
-        for line in lines:
-            if line.strip().startswith("MESY_DATA_DIR="):
-                new_lines.append(new_line)
-                updated = True
-            else:
-                new_lines.append(line)
-        if not updated:
-            new_lines.append(new_line)
-        env_file.write_text("\n".join(new_lines) + "\n")
-    else:
-        env_file.write_text(new_line + "\n")
-
-
-def prompt_data_dir() -> Path:
-    """Ask the user where their Mesy-Data folder lives and persist the choice.
-
-    Returns the resolved, confirmed data directory path.
-    """
-    current = _resolve_data_dir()
-    is_configured = current != REPO_DIR
-
-    if is_configured:
-        print(f"Data dir: {current}")
-        answer = input("Change data directory? [y/N]: ").strip().lower()
-        if answer != "y":
-            return current
-
-    default_path = Path.home() / "Workspace" / "Mesy-Data"
-    chosen_raw = input(f"Data directory [{default_path}]: ").strip()
-    chosen = Path(chosen_raw).expanduser().resolve() if chosen_raw else default_path.resolve()
-
-    try:
-        chosen.relative_to(REPO_DIR)
-        inside_repo = True
-    except ValueError:
-        inside_repo = False
-    if inside_repo or chosen == REPO_DIR:
-        raise SystemExit("[error] Data dir cannot be inside the code repo")
-
-    if not chosen.exists():
-        create_answer = input("Directory doesn't exist. Create it? [Y/n]: ").strip().lower()
-        if create_answer in ("", "y"):
-            chosen.mkdir(parents=True, exist_ok=True)
-        else:
-            raise SystemExit(f"[error] Aborted: {chosen} does not exist")
-
-    _write_data_dir_to_env(chosen)
-    os.environ["MESY_DATA_DIR"] = str(chosen)
-    return chosen
+# Example Claude Code target (uncomment and edit):
+# [target:claude_code]
+# source = ~/.claude
+# repo_subdir = claude
+# mapping_conf = claude/projects.conf
+# sync_mode = symlink
+"""
 
 
 def log(tag: str, msg: str) -> None:
     print(f"[{tag}] {msg}")
+
+
+# ---------------------------------------------------------------------------
+# repos.conf management
+# ---------------------------------------------------------------------------
+
+
+def _read_repos_conf() -> ConfigParser:
+    cfg = ConfigParser()
+    if REPOS_CONF_PATH.exists():
+        cfg.read(REPOS_CONF_PATH)
+    return cfg
+
+
+def _write_repos_conf(cfg: ConfigParser) -> None:
+    with REPOS_CONF_PATH.open("w") as f:
+        cfg.write(f)
+
+
+def _repo_path_valid(raw: str) -> Path | None:
+    """Resolve the user-provided path. Reject if it resolves inside REPO_DIR.
+
+    Returns the resolved Path on success, None on rejection (caller re-prompts).
+    """
+    candidate = Path(raw).expanduser()
+    try:
+        resolved = candidate.resolve()
+    except OSError as e:
+        log("error", f"Cannot resolve path: {e}")
+        return None
+
+    repo_resolved = REPO_DIR.resolve()
+    try:
+        resolved.relative_to(repo_resolved)
+        log("error", f"Data repo path resolves inside the Mesy code dir: {resolved}")
+        return None
+    except ValueError:
+        pass
+
+    return resolved
+
+
+def prompt_repos_conf() -> list[dict]:
+    """Show existing repos, let user add more, persist to repos.conf.
+
+    Returns the full list of repos (existing + new) as dicts with
+    keys 'name' and 'path' (same shape as src.config.load_repos).
+    """
+    existing = load_repos()
+
+    if existing:
+        print(f"Found {len(existing)} repo(s) in repos.conf:")
+        for r in existing:
+            print(f"  [{r['name']}] {r['path']}")
+        if input("Add another data repo? [y/N]: ").strip().lower() != "y":
+            return existing
+    else:
+        print("No data repos registered yet. Add at least one.")
+
+    cfg = _read_repos_conf()
+    existing_names = {r["name"] for r in existing}
+    new_repos: list[dict] = []
+
+    while True:
+        name = input("Repo name (e.g. alfred-memory): ").strip()
+        if not name:
+            log("error", "Name cannot be empty")
+            continue
+        if name in existing_names or any(r["name"] == name for r in new_repos):
+            log("error", f"Name '{name}' already registered")
+            continue
+
+        while True:
+            raw_path = input("Repo path: ").strip()
+            if not raw_path:
+                log("error", "Path cannot be empty")
+                continue
+            resolved = _repo_path_valid(raw_path)
+            if resolved is None:
+                continue
+
+            if not resolved.exists():
+                create = input(f"Directory {resolved} does not exist. Create it? [Y/n]: ").strip().lower()
+                if create in ("", "y"):
+                    resolved.mkdir(parents=True, exist_ok=True)
+                else:
+                    log("error", "Skipping — path must exist")
+                    continue
+            elif not resolved.is_dir():
+                log("error", f"{resolved} is not a directory")
+                continue
+
+            break
+
+        section = f"repo:{name}"
+        cfg[section] = {"path": str(resolved)}
+        new_repos.append({"name": name, "path": resolved})
+        log("ok", f"Queued [{section}] path = {resolved}")
+
+        if input("Add another data repo? [y/N]: ").strip().lower() != "y":
+            break
+
+    if new_repos:
+        _write_repos_conf(cfg)
+        log("ok", f"Wrote {len(new_repos)} new repo(s) to repos.conf")
+
+    return existing + new_repos
+
+
+# ---------------------------------------------------------------------------
+# sync.conf handling (per-repo)
+# ---------------------------------------------------------------------------
+
+
+def ensure_sync_conf(data_dir: Path) -> bool:
+    """Verify data_dir has a sync.conf. Offer to create a template if missing.
+
+    Returns True if the file exists (or was created), False if the user
+    declined and the repo should be skipped.
+    """
+    sync_conf = data_dir / "sync.conf"
+    if sync_conf.exists():
+        return True
+
+    log("warn", f"{sync_conf} is missing")
+    create = input("Create a template sync.conf? [Y/n]: ").strip().lower()
+    if create in ("", "y"):
+        data_dir.mkdir(parents=True, exist_ok=True)
+        sync_conf.write_text(SYNC_CONF_TEMPLATE)
+        log("ok", f"Wrote template sync.conf to {sync_conf} — edit it before running the daemon")
+        return True
+
+    log("skip", f"Skipping {data_dir} — no sync.conf")
+    return False
+
+
+def load_sync_conf_targets(data_dir: Path) -> list[dict]:
+    """Load target definitions from a repo's sync.conf."""
+    config_path = data_dir / "sync.conf"
+    if not config_path.exists():
+        return []
+
+    cfg = ConfigParser()
+    cfg.read(config_path)
+
+    targets = []
+    for section in cfg.sections():
+        if not section.startswith("target:"):
+            continue
+        name = section.split(":", 1)[1]
+        tdef: dict = {"name": name}
+        tdef["source"] = Path(cfg.get(section, "source")).expanduser()
+        tdef["repo_subdir"] = cfg.get(section, "repo_subdir")
+
+        if cfg.has_option(section, "mapping_conf"):
+            tdef["type"] = "claude-code"
+        else:
+            tdef["type"] = "generic"
+
+        if cfg.has_option(section, "file_patterns"):
+            tdef["file_patterns"] = [p.strip() for p in cfg.get(section, "file_patterns").split(",")]
+        else:
+            tdef["file_patterns"] = ["*.md"]
+
+        if cfg.has_option(section, "exclude"):
+            tdef["exclude"] = [e.strip() for e in cfg.get(section, "exclude").split(",")]
+        else:
+            tdef["exclude"] = []
+
+        tdef["sync_mode"] = cfg.get(section, "sync_mode", fallback="symlink").strip()
+
+        targets.append(tdef)
+
+    return targets
+
+
+# ---------------------------------------------------------------------------
+# File helpers (unchanged from original — pure, no globals)
+# ---------------------------------------------------------------------------
+
+
+def _split_frontmatter(text: str) -> tuple[str, dict]:
+    """Split markdown into (body, frontmatter_dict)."""
+    if not text.startswith("---\n"):
+        return text, {}
+    parts = text.split("---\n", 2)
+    if len(parts) < 3:
+        return text, {}
+    fm = {}
+    for line in parts[1].strip().split("\n"):
+        if ": " in line:
+            key, val = line.split(": ", 1)
+            fm[key.strip()] = val.strip()
+    return parts[2], fm
 
 
 def merge_conflicting_file(local: Path, repo: Path) -> None:
@@ -156,21 +272,6 @@ def merge_conflicting_file(local: Path, repo: Path) -> None:
 
     repo.write_text(merged)
     log("conflict", f"  {repo.name}: both versions preserved (conflict: true)")
-
-
-def _split_frontmatter(text: str) -> tuple[str, dict]:
-    """Split markdown into (body, frontmatter_dict)."""
-    if not text.startswith("---\n"):
-        return text, {}
-    parts = text.split("---\n", 2)
-    if len(parts) < 3:
-        return text, {}
-    fm = {}
-    for line in parts[1].strip().split("\n"):
-        if ": " in line:
-            key, val = line.split(": ", 1)
-            fm[key.strip()] = val.strip()
-    return parts[2], fm
 
 
 def make_file_symlink(link: Path, target: Path) -> None:
@@ -254,26 +355,14 @@ def make_symlink(link: Path, target: Path) -> None:
         log("ok", f"Symlinked {link.name}")
 
 
-def load_project_mappings() -> dict[str, str]:
-    """Load projects.conf and return {raw_claude_name: canonical_name} mapping."""
-    mapping = {}
-    if not PROJECTS_CONF_PATH.exists():
-        return mapping
-    cfg = ConfigParser()
-    cfg.read(PROJECTS_CONF_PATH)
-    for section in cfg.sections():
-        canonical = section
-        paths_str = cfg.get(section, "paths", fallback="")
-        for raw_name in paths_str.split(","):
-            raw_name = raw_name.strip()
-            if raw_name:
-                mapping[raw_name] = canonical
-    return mapping
+# ---------------------------------------------------------------------------
+# Per-repo migration
+# ---------------------------------------------------------------------------
 
 
-def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
+def migrate_repo_to_canonical(data_dir: Path, mapping: dict[str, str]) -> None:
     """Rename raw-named project dirs in the repo to their canonical names."""
-    projects_dir = DATA_DIR / "claude" / "projects"
+    projects_dir = data_dir / "claude" / "projects"
     if not projects_dir.exists():
         return
 
@@ -293,13 +382,13 @@ def migrate_repo_to_canonical(mapping: dict[str, str]) -> None:
                 break
 
 
-def setup_claude_code_symlinks() -> None:
-    """Symlink global and project memories, plus CLAUDE.md files."""
-    make_symlink(CLAUDE_DIR / "memory", DATA_DIR / "claude" / "global")
-    make_file_symlink(CLAUDE_DIR / "CLAUDE.md", DATA_DIR / "claude" / "global" / "CLAUDE.md")
+def setup_claude_code_symlinks(data_dir: Path) -> None:
+    """Symlink global and project memories, plus CLAUDE.md files, for one data repo."""
+    make_symlink(CLAUDE_DIR / "memory", data_dir / "claude" / "global")
+    make_file_symlink(CLAUDE_DIR / "CLAUDE.md", data_dir / "claude" / "global" / "CLAUDE.md")
 
-    mapping = load_project_mappings()
-    migrate_repo_to_canonical(mapping)
+    mapping = load_project_mappings(data_dir)
+    migrate_repo_to_canonical(data_dir, mapping)
 
     claude_projects_dir = CLAUDE_DIR / "projects"
     if claude_projects_dir.exists():
@@ -314,14 +403,14 @@ def setup_claude_code_symlinks() -> None:
 
             if raw_name in mapping:
                 canonical = mapping[raw_name]
-                canonical_dir = DATA_DIR / "claude" / "projects" / canonical
+                canonical_dir = data_dir / "claude" / "projects" / canonical
                 make_symlink(memory_path, canonical_dir)
                 make_file_symlink(
                     project_dir / "CLAUDE.md",
                     canonical_dir / "CLAUDE.md",
                 )
             elif memory_path.is_dir():
-                pending_dir = DATA_DIR / "claude" / "projects" / ".pending" / raw_name
+                pending_dir = data_dir / "claude" / "projects" / ".pending" / raw_name
                 pending_dir.mkdir(parents=True, exist_ok=True)
                 make_symlink(memory_path, pending_dir)
                 marker = pending_dir / ".needs_mapping"
@@ -345,7 +434,7 @@ def setup_claude_code_symlinks() -> None:
         memory_path = claude_project_dir / "memory"
         if memory_path.exists():
             continue
-        canonical_dir = DATA_DIR / "claude" / "projects" / canonical
+        canonical_dir = data_dir / "claude" / "projects" / canonical
         if canonical_dir.exists():
             claude_project_dir.mkdir(parents=True, exist_ok=True)
             make_symlink(memory_path, canonical_dir)
@@ -356,12 +445,12 @@ def setup_claude_code_symlinks() -> None:
             log("ok", f"Pre-linked {raw_name} -> {canonical}")
 
 
-def setup_generic_target(name: str, source: Path, repo_subdir: str,
+def setup_generic_target(data_dir: Path, name: str, source: Path, repo_subdir: str,
                          file_patterns: list[str], exclude: list[str]) -> None:
     """Set up a generic sync target: copy files into repo, replace with symlinks."""
     import fnmatch
 
-    repo_dir = DATA_DIR / repo_subdir
+    repo_dir = data_dir / repo_subdir
 
     if not source.exists():
         log("skip", f"[{name}] Source {source} does not exist")
@@ -411,7 +500,6 @@ def setup_generic_target(name: str, source: Path, repo_subdir: str,
                 os.symlink(repo_file, item)
                 log("ok", f"  [{name}] Symlinked {item.name}")
 
-        # Symlink repo files not in source (from other devices)
         for repo_file in sorted(dest.iterdir()):
             if repo_file.is_dir():
                 src_sub = src / repo_file.name
@@ -425,12 +513,9 @@ def setup_generic_target(name: str, source: Path, repo_subdir: str,
             src_file = src / repo_file.name
             if src_file.is_symlink():
                 if src_file.resolve() == repo_file.resolve():
-                    # Already correct — nothing to do
                     continue
-                # Broken or wrong symlink — replace it
                 src_file.unlink()
             elif src_file.exists():
-                # Regular file — leave it for the adoption loop above to handle
                 continue
             os.symlink(repo_file, src_file)
             log("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
@@ -438,44 +523,49 @@ def setup_generic_target(name: str, source: Path, repo_subdir: str,
     adopt_dir(source, repo_dir)
 
 
-def load_sync_conf_targets() -> list[dict]:
-    """Load target definitions from sync.conf."""
-    config_path = DATA_DIR / "sync.conf"
-    if not config_path.exists():
-        return []
+def setup_repo(data_dir: Path, seen_target_types: set[str]) -> None:
+    """Run the per-repo migration: Claude Code + generic targets.
 
-    cfg = ConfigParser()
-    cfg.read(config_path)
+    `seen_target_types` is mutated to track which target types have already
+    been claimed by an earlier repo. Duplicates across repos are skipped
+    with a warning.
+    """
+    target_defs = load_sync_conf_targets(data_dir)
 
-    targets = []
-    for section in cfg.sections():
-        if not section.startswith("target:"):
+    for tdef in target_defs:
+        ttype = tdef["type"]
+        if ttype in seen_target_types:
+            log("warn", f"[{tdef['name']}] target type '{ttype}' already handled by an earlier repo — skipping")
             continue
-        name = section.split(":", 1)[1]
-        tdef = {"name": name}
-        tdef["source"] = Path(cfg.get(section, "source")).expanduser()
-        tdef["repo_subdir"] = cfg.get(section, "repo_subdir")
+        seen_target_types.add(ttype)
 
-        if cfg.has_option(section, "mapping_conf"):
-            tdef["type"] = "claude-code"
-        else:
-            tdef["type"] = "generic"
+        if ttype == "claude-code":
+            print(f"--- Claude Code ({data_dir.name}) ---")
+            setup_claude_code_symlinks(data_dir)
+            continue
 
-        if cfg.has_option(section, "file_patterns"):
-            tdef["file_patterns"] = [p.strip() for p in cfg.get(section, "file_patterns").split(",")]
-        else:
-            tdef["file_patterns"] = ["*.md"]
+        if ttype == "generic":
+            if tdef.get("sync_mode") == "copy":
+                log(
+                    "info",
+                    f"[{tdef['name']}] Copy-mode target — skipping symlink setup. "
+                    "Will be initialized on first daemon run.",
+                )
+                continue
+            print(f"--- {tdef['name']} ({data_dir.name}) ---")
+            setup_generic_target(
+                data_dir=data_dir,
+                name=tdef["name"],
+                source=tdef["source"],
+                repo_subdir=tdef["repo_subdir"],
+                file_patterns=tdef["file_patterns"],
+                exclude=tdef["exclude"],
+            )
 
-        if cfg.has_option(section, "exclude"):
-            tdef["exclude"] = [e.strip() for e in cfg.get(section, "exclude").split(",")]
-        else:
-            tdef["exclude"] = []
 
-        tdef["sync_mode"] = cfg.get(section, "sync_mode", fallback="symlink").strip()
-
-        targets.append(tdef)
-
-    return targets
+# ---------------------------------------------------------------------------
+# Daemon install (unchanged)
+# ---------------------------------------------------------------------------
 
 
 def install_systemd_service() -> None:
@@ -558,6 +648,11 @@ def install_daemon() -> None:
         install_systemd_service()
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
 def main() -> None:
     print("=== Mesy: Multi-Target Memory Sync Setup ===")
     print(f"Platform: {platform.system()}")
@@ -565,41 +660,22 @@ def main() -> None:
     print(f"Claude:   {CLAUDE_DIR}")
     print()
 
-    chosen_data_dir = prompt_data_dir()
-    global DATA_DIR, PROJECTS_CONF_PATH  # Must reassign before setup functions read these globals
-    DATA_DIR = chosen_data_dir
-    PROJECTS_CONF_PATH = DATA_DIR / "claude" / "projects.conf"
-    print()
+    repos = prompt_repos_conf()
+    if not repos:
+        raise SystemExit("[error] No data repos registered; aborting.")
 
+    print()
     CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Load targets from sync.conf
-    target_defs = load_sync_conf_targets()
-
-    # Setup Claude Code target (always runs)
-    print("--- Claude Code ---")
-    setup_claude_code_symlinks()
-
-    # Setup generic targets from config
-    for tdef in target_defs:
-        if tdef["type"] != "generic":
+    seen_target_types: set[str] = set()
+    for repo in repos:
+        data_dir = repo["path"]
+        print(f"\n=== Repo: {repo['name']} ({data_dir}) ===")
+        if not ensure_sync_conf(data_dir):
             continue
-        if tdef.get("sync_mode") == "copy":
-            log(
-                "info",
-                f"[{tdef['name']}] Copy-mode target — skipping symlink setup. "
-                "Will be initialized on first daemon run.",
-            )
-            continue
-        print(f"\n--- {tdef['name']} ---")
-        setup_generic_target(
-            name=tdef["name"],
-            source=tdef["source"],
-            repo_subdir=tdef["repo_subdir"],
-            file_patterns=tdef["file_patterns"],
-            exclude=tdef["exclude"],
-        )
+        setup_repo(data_dir, seen_target_types)
 
+    print()
     install_daemon()
 
     print()

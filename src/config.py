@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from configparser import ConfigParser
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,31 +15,6 @@ log = logging.getLogger("mesy")
 
 REPO_DIR = Path(__file__).resolve().parent.parent
 REPOS_CONF_PATH = REPO_DIR / "repos.conf"
-
-
-def _resolve_data_dir() -> Path:
-    """Resolve DATA_DIR in priority order:
-    1. MESY_DATA_DIR env var (if set and points to a valid directory)
-    2. Sibling ../Mesy-Data relative to REPO_DIR
-    3. REPO_DIR (backwards compat fallback)
-    """
-    env_val = os.environ.get("MESY_DATA_DIR", "").strip()
-    if env_val:
-        candidate = Path(env_val).expanduser().resolve()
-        if candidate.is_dir():
-            return candidate
-        log.warning("MESY_DATA_DIR=%s is not a valid directory, ignoring", env_val)
-
-    sibling = (REPO_DIR / ".." / "Mesy-Data").resolve()
-    if sibling.is_dir():
-        return sibling
-
-    return REPO_DIR
-
-
-DATA_DIR = _resolve_data_dir()
-CONFIG_PATH = DATA_DIR / "sync.conf"
-PROJECTS_CONF_PATH = DATA_DIR / "claude" / "projects.conf"
 
 
 @dataclass
@@ -57,10 +31,9 @@ class RepoContext:
 def load_repos() -> list[dict]:
     """Parse repos.conf and return a list of repo dicts.
 
-    Each dict has keys: name (str), path (Path).
-
-    Returns an empty list if repos.conf does not exist (caller should fall
-    back to single-repo mode using DATA_DIR).
+    Each dict has keys: name (str), path (Path). Returns an empty list if
+    repos.conf does not exist — the daemon requires at least one [repo:*]
+    section and will exit if the list is empty.
     """
     if not REPOS_CONF_PATH.exists():
         return []
@@ -90,13 +63,9 @@ def load_repos() -> list[dict]:
     return repos
 
 
-def load_config(data_dir: Path | None = None) -> ConfigParser:
-    """Load sync.conf from data_dir and return the full ConfigParser.
-
-    Falls back to the module-level CONFIG_PATH (DATA_DIR/sync.conf) when
-    data_dir is not provided, preserving backward compatibility.
-    """
-    config_path = (data_dir / "sync.conf") if data_dir is not None else CONFIG_PATH
+def load_config(data_dir: Path) -> ConfigParser:
+    """Load sync.conf from data_dir and return the full ConfigParser."""
+    config_path = data_dir / "sync.conf"
     defaults = {
         "debounce_seconds": "30",
         "pull_interval_seconds": "60",
@@ -114,15 +83,9 @@ def get_mesy_settings(cfg: ConfigParser) -> dict:
     return dict(cfg["mesy"])
 
 
-def load_project_mappings(data_dir: Path | None = None) -> dict[str, str]:
-    """Load projects.conf and return {raw_claude_name: canonical_name} mapping.
-
-    Uses data_dir / claude / projects.conf when data_dir is provided, otherwise
-    falls back to the module-level PROJECTS_CONF_PATH.
-    """
-    projects_conf = (
-        data_dir / "claude" / "projects.conf" if data_dir is not None else PROJECTS_CONF_PATH
-    )
+def load_project_mappings(data_dir: Path) -> dict[str, str]:
+    """Load projects.conf from data_dir and return {raw_claude_name: canonical_name} mapping."""
+    projects_conf = data_dir / "claude" / "projects.conf"
     mapping = {}
     if not projects_conf.exists():
         return mapping
@@ -176,17 +139,21 @@ def load_targets(cfg: ConfigParser) -> list[dict]:
         else:
             target_def["exclude"] = []
 
-        raw_sync_mode = cfg.get(section, "sync_mode", fallback="symlink").strip()
-        valid_sync_modes = {"symlink", "copy"}
-        if raw_sync_mode not in valid_sync_modes:
-            log.warning(
-                "[target:%s] Invalid sync_mode=%r; must be one of %s — defaulting to 'symlink'",
-                name,
-                raw_sync_mode,
-                sorted(valid_sync_modes),
-            )
+        if cfg.has_option(section, "sync_mode"):
+            valid_sync_modes = {"symlink", "copy"}
+            raw_sync_mode = cfg.get(section, "sync_mode").strip()
+            if raw_sync_mode not in valid_sync_modes:
+                log.warning(
+                    "[target:%s] Invalid sync_mode=%r; must be one of %s — defaulting to 'symlink'",
+                    name,
+                    raw_sync_mode,
+                    sorted(valid_sync_modes),
+                )
+                raw_sync_mode = "symlink"
+        else:
             raw_sync_mode = "symlink"
         target_def["sync_mode"] = raw_sync_mode
+
 
         targets.append(target_def)
 

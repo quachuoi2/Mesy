@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 
 from src.config import (
-    DATA_DIR,
     REPO_DIR,
     RepoContext,
     get_mesy_settings,
@@ -71,11 +70,10 @@ def get_all_stage_dirs(targets: list[SyncTarget]) -> list[str]:
     return dirs
 
 
-def get_md_mtimes(data_dir: Path | None = None) -> dict[str, float]:
+def get_md_mtimes(data_dir: Path) -> dict[str, float]:
     """Get modification times of all .md files in data_dir."""
-    search_dir = data_dir if data_dir is not None else DATA_DIR
     mtimes = {}
-    for md_file in search_dir.rglob("*.md"):
+    for md_file in data_dir.rglob("*.md"):
         if ".git" in md_file.parts:
             continue
         try:
@@ -217,28 +215,17 @@ def run_with_polling(repo_contexts: list[RepoContext], settings: dict) -> None:
 
 
 def main() -> None:
-    # Determine which repos to manage.
     repo_list = load_repos()
+    if not repo_list:
+        log.error(
+            "repos.conf not found or empty at %s — Mesy now requires a repos.conf "
+            "with at least one [repo:*] section.",
+            REPO_DIR / "repos.conf",
+        )
+        return
 
-    if repo_list:
-        # Multi-repo mode: repos.conf defines all data repos.
-        log.info("Multi-repo mode: %d repo(s) from repos.conf", len(repo_list))
-        repo_contexts = _build_repo_contexts(repo_list)
-    else:
-        # Single-repo fallback: use DATA_DIR from .env (backward compat).
-        log.info("Single-repo mode (repos.conf not found, using DATA_DIR=%s)", DATA_DIR)
-        cfg = load_config()
-        repo_settings = get_mesy_settings(cfg)
-        target_defs = load_targets(cfg)
-        targets = build_targets(target_defs, data_dir=DATA_DIR)
-        stage_dirs = get_all_stage_dirs(targets)
-        repo_contexts = [RepoContext(
-            name="default",
-            data_dir=DATA_DIR,
-            targets=targets,
-            stage_dirs=stage_dirs,
-            settings=repo_settings,
-        )]
+    log.info("Loaded %d repo(s) from repos.conf", len(repo_list))
+    repo_contexts = _build_repo_contexts(repo_list)
 
     if not any(ctx.targets for ctx in repo_contexts):
         log.error("No targets configured in any sync.conf. Add [target:*] sections.")

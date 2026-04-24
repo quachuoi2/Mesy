@@ -19,14 +19,10 @@ def tmp_repo(tmp_path, monkeypatch):
 
     # Patch in config (the single source of truth)
     monkeypatch.setattr("src.config.REPO_DIR", repo)
-    monkeypatch.setattr("src.config.DATA_DIR", repo)
-    monkeypatch.setattr("src.config.CONFIG_PATH", repo / "sync.conf")
-    monkeypatch.setattr("src.config.PROJECTS_CONF_PATH", repo / "claude" / "projects.conf")
     monkeypatch.setattr("src.config.REPOS_CONF_PATH", repo / "repos.conf")
 
-    # Propagate to all modules that import REPO_DIR or DATA_DIR directly
+    # Propagate to all modules that import REPO_DIR directly
     monkeypatch.setattr("src.git_utils.REPO_DIR", repo)
-    monkeypatch.setattr("src.main.DATA_DIR", repo)
     monkeypatch.setattr("src.main.REPO_DIR", repo)
 
     return repo
@@ -61,12 +57,6 @@ def tmp_multi_repo(tmp_path, monkeypatch):
     code_repo.mkdir()
     monkeypatch.setattr("src.config.REPO_DIR", code_repo)
     monkeypatch.setattr("src.config.REPOS_CONF_PATH", repos_conf)
-
-    # Use repo_a as the legacy DATA_DIR so single-repo fallback tests still work
-    monkeypatch.setattr("src.config.DATA_DIR", repo_a)
-    monkeypatch.setattr("src.config.CONFIG_PATH", repo_a / "sync.conf")
-    monkeypatch.setattr("src.config.PROJECTS_CONF_PATH", repo_a / "claude" / "projects.conf")
-    monkeypatch.setattr("src.main.DATA_DIR", repo_a)
     monkeypatch.setattr("src.main.REPO_DIR", code_repo)
 
     return {"repo_a": repo_a, "repo_b": repo_b, "repos_conf": repos_conf}
