@@ -170,9 +170,9 @@ systemctl --user stop mesy       # Stop
 ### Windows (Task Scheduler)
 
 ```powershell
-schtasks /Query /TN MesyMemorySync       # Check status
-schtasks /Run /TN MesyMemorySync          # Start
-schtasks /End /TN MesyMemorySync          # Stop
+schtasks /Query /TN Mesy       # Check status
+schtasks /Run /TN Mesy          # Start
+schtasks /End /TN Mesy          # Stop
 ```
 
 ## Dual-Boot / WSL

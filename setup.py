@@ -672,7 +672,7 @@ def install_task_scheduler(python_exe: str) -> None:
     because ONLOGON triggers via schtasks require admin; the PS cmdlet
     creates a per-user ONLOGON task without elevation.
     """
-    task_name = "MesyMemorySync"
+    task_name = "Mesy"
     sync_script = REPO_DIR / "sync.py"
 
     ps_script = (
@@ -744,7 +744,7 @@ def main() -> None:
     print("=== Setup complete ===")
     print("Memory sync daemon is running. Changes will auto-sync to GitHub.")
     if IS_WINDOWS:
-        print("Check status: schtasks /Query /TN MesyMemorySync")
+        print("Check status: schtasks /Query /TN Mesy")
     else:
         print("Check status: systemctl --user status mesy")
 
