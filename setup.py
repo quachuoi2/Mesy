@@ -598,30 +598,24 @@ def install_systemd_service() -> None:
 
 
 def install_task_scheduler(python_exe: str) -> None:
-    """Install a Windows Task Scheduler task for the sync daemon."""
+    """Install a Windows Task Scheduler task for the sync daemon.
+
+    Uses PowerShell's Register-ScheduledTask instead of schtasks /Create
+    because ONLOGON triggers via schtasks require admin; the PS cmdlet
+    creates a per-user ONLOGON task without elevation.
+    """
     task_name = "MesyMemorySync"
     sync_script = REPO_DIR / "sync.py"
 
-    subprocess.run(
-        ["schtasks", "/Delete", "/TN", task_name, "/F"],
-        capture_output=True,
-        check=False,
+    ps_script = (
+        f'$action = New-ScheduledTaskAction -Execute \'"{python_exe}"\' -Argument \'"{sync_script}"\';'
+        f'$trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME;'
+        f'Unregister-ScheduledTask -TaskName "{task_name}" -Confirm:$false -ErrorAction SilentlyContinue;'
+        f'Register-ScheduledTask -TaskName "{task_name}" -Action $action -Trigger $trigger -RunLevel Limited'
     )
 
     result = subprocess.run(
-        [
-            "schtasks",
-            "/Create",
-            "/TN",
-            task_name,
-            "/TR",
-            f'"{python_exe}" "{sync_script}"',
-            "/SC",
-            "ONLOGON",
-            "/RL",
-            "LIMITED",
-            "/F",
-        ],
+        ["powershell", "-NonInteractive", "-Command", ps_script],
         capture_output=True,
         text=True,
         check=False,
