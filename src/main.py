@@ -231,6 +231,7 @@ def main() -> None:
         log.error("No targets configured in any sync.conf. Add [target:*] sections.")
         return
 
+    #refactor this. Each repo will have its own settings. Global default is built into load_config()
     # Global settings used as fallback defaults (e.g. scan_interval which is top-level).
     first_data_dir = repo_contexts[0].data_dir
     cfg = load_config(data_dir=first_data_dir)

@@ -1,5 +1,7 @@
 """Generic sync target — flat symlink or copy mode for OpenClaw and future tools."""
 
+from __future__ import annotations
+
 import filecmp
 import fnmatch
 import logging
@@ -8,9 +10,12 @@ from pathlib import Path
 
 from src.git_utils import merge_conflicting_file
 from src.sync_state import SyncState
+from src.targets._migration import FilePair, ensure_real_file
 from src.targets.base import SyncTarget
 
 log = logging.getLogger("mesy")
+
+_LAST_SYNC_MODE_KEY = "__last_sync_mode__"
 
 
 class GenericTarget(SyncTarget):
@@ -45,27 +50,35 @@ class GenericTarget(SyncTarget):
             self._sync_state = None
 
     def setup(self) -> None:
-        """Initial migration: copy files from source into repo, replace with symlinks or copies."""
-        if not self.source.exists():
-            log.info("[%s] Source %s does not exist, skipping setup", self.name, self.source)
-            return
-
-        self.repo_dir.mkdir(parents=True, exist_ok=True)
-        if self.sync_mode == "copy":
-            self._adopt_directory_copy(self.source, self.repo_dir)
-        else:
-            self._adopt_directory(self.source, self.repo_dir)
+        """Initial migration — delegates to the same three-phase pipeline as scan()."""
+        self.scan()
 
     def scan(self) -> None:
-        """Detect new files in source, adopt them via the configured sync mode."""
+        """Detect new/changed files using the three-phase model."""
         if not self.source.exists():
             return
 
         self.repo_dir.mkdir(parents=True, exist_ok=True)
-        if self.sync_mode == "copy":
-            self._adopt_directory_copy(self.source, self.repo_dir)
-        else:
-            self._adopt_directory(self.source, self.repo_dir)
+
+        # ------------------------------------------------------------------
+        # PHASE 1: MIGRATION
+        # Detect sync_mode change since last run; invalidate stale hashes on
+        # copy → other transitions so Phase 3 re-seeds cleanly.
+        # ------------------------------------------------------------------
+        self._migrate()
+
+        # ------------------------------------------------------------------
+        # PHASE 2: ADOPTION
+        # Walk source + repo, shape-fix mapped files, build pair list.
+        # No content writes beyond shape-fix.
+        # ------------------------------------------------------------------
+        pairs = self._walk_and_adopt()
+
+        # ------------------------------------------------------------------
+        # PHASE 3: SYNC
+        # Reconcile content per sync_mode.
+        # ------------------------------------------------------------------
+        self._sync(pairs)
 
     def get_stage_dirs(self) -> list[str]:
         """Return the repo_subdir relative to data_dir for this target."""
@@ -74,6 +87,200 @@ class GenericTarget(SyncTarget):
             return [str(rel) + "/"]
         except ValueError:
             return [str(self.repo_dir) + "/"]
+
+    # ======================================================================
+    # PHASE 1: MIGRATION
+    # Detect mode changes, invalidate stale hashes, persist current mode.
+    # ======================================================================
+
+    def _migrate(self) -> None:
+        """Detect sync_mode change since last run and invalidate stale hashes.
+
+        If the mode changed away from copy mode (e.g. copy → symlink → copy),
+        any stored hashes from a prior copy-mode run are stale relative to
+        edits made while in symlink mode.  Invalidating them forces Phase 3
+        to re-seed via first-sync logic (source wins) rather than producing
+        wrong three-way decisions.
+
+        The current sync_mode is persisted in the SyncState hash file under
+        a reserved key so the next run can compare.
+        """
+        if self._sync_state is None:
+            # Symlink mode: no hash tracking, nothing to do.
+            return
+
+        last_mode = self._sync_state.get_hash(_LAST_SYNC_MODE_KEY)
+        if last_mode is not None and last_mode != self.sync_mode:
+            log.info(
+                "[%s] sync_mode changed from %s to %s — invalidating stale hashes",
+                self.name,
+                last_mode,
+                self.sync_mode,
+            )
+            self._sync_state.clear_target_hashes(
+                exclude_keys={_LAST_SYNC_MODE_KEY}
+            )
+
+        # Persist current mode for next run's comparison.
+        # Store raw string (not hashed) under the reserved key.
+        self._sync_state.set_raw(_LAST_SYNC_MODE_KEY, self.sync_mode)
+
+    # ======================================================================
+    # PHASE 2: ADOPTION
+    # Walk source + repo, shape-fix files, build pair list.
+    # ======================================================================
+
+    def _walk_and_adopt(self) -> list[FilePair]:
+        """Walk source and repo dirs recursively; return (source, repo) pairs.
+
+        For copy mode: uses ensure_real_file to fix leftover symlinks on the
+        source side before building the pair.
+        For symlink mode: symlinks are already-correct and are skipped (they
+        stay in place; Phase 3 handles newly-appearing real files).
+        Also creates empty dirs in source for repo subdirs that don't exist yet.
+        """
+        return self._walk_dir(self.source, self.repo_dir)
+
+    def _walk_dir(self, source_dir: Path, repo_dir: Path) -> list[FilePair]:
+        """Recursive helper for _walk_and_adopt."""
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        pairs: list[FilePair] = []
+
+        # Collect all names visible in source or repo.
+        source_names: set[str] = set()
+        for item in sorted(source_dir.iterdir()):
+            if self._should_exclude(item.name):
+                continue
+            source_names.add(item.name)
+
+            if item.is_symlink():
+                repo_file = repo_dir / item.name
+                if self.sync_mode == "copy":
+                    # Phase 2 shape-fix: ensure the source is a real file in copy mode.
+                    fallback = repo_file if repo_file.exists() else None
+                    if not item.is_dir() and self._matches_patterns(item.name):
+                        ensure_real_file(item, repo_fallback=fallback)
+                        if item.exists():  # shape-fix succeeded
+                            pairs.append(FilePair(source_file=item, repo_file=repo_file))
+                    continue
+                # symlink mode:
+                if self._matches_patterns(item.name):
+                    resolved_ok = (
+                        item.exists() and item.resolve() == repo_file.resolve()
+                    )
+                    if not resolved_ok and repo_file.exists():
+                        # Broken or wrong symlink — fix it in place (Phase 2 shape-fix).
+                        item.unlink()
+                        item.symlink_to(repo_file)
+                        log.info(
+                            "[%s] Fixed broken/wrong symlink: %s", self.name, item.name
+                        )
+                # Either correct symlink or no repo file — nothing for Phase 3 to do.
+                continue
+
+            if item.is_dir():
+                # Recurse; this also handles repo-only subdirs below.
+                pairs.extend(self._walk_dir(item, repo_dir / item.name))
+                continue
+
+            if not self._matches_patterns(item.name):
+                continue
+
+            pairs.append(FilePair(source_file=item, repo_file=repo_dir / item.name))
+
+        # Repo → source: add pairs for repo files/dirs not in source.
+        for repo_item in sorted(repo_dir.iterdir()):
+            if repo_item.name in source_names:
+                continue
+            if repo_item.is_dir():
+                source_subdir = source_dir / repo_item.name
+                source_subdir.mkdir(parents=True, exist_ok=True)
+                pairs.extend(self._walk_dir(source_subdir, repo_item))
+                continue
+            if not self._matches_patterns(repo_item.name):
+                continue
+            source_file = source_dir / repo_item.name
+            if source_file.is_symlink():
+                # Leftover or broken symlink in source position for a repo file.
+                if self.sync_mode == "copy":
+                    # Phase 2 shape-fix: convert to real file.
+                    ensure_real_file(source_file, repo_fallback=repo_item)
+                    pairs.append(FilePair(source_file=source_file, repo_file=repo_item))
+                else:
+                    # symlink mode: fix broken/wrong symlink so it points at the repo file.
+                    if source_file.resolve() != repo_item.resolve():
+                        source_file.unlink()
+                        source_file.symlink_to(repo_item)
+                        log.info(
+                            "[%s] Fixed broken symlink: %s -> %s",
+                            self.name,
+                            source_file.name,
+                            repo_item.name,
+                        )
+                continue
+            pairs.append(FilePair(source_file=source_file, repo_file=repo_item))
+
+        return pairs
+
+    # ======================================================================
+    # PHASE 3: SYNC
+    # Reconcile content per sync_mode.
+    # ======================================================================
+
+    def _sync(self, pairs: list[FilePair]) -> None:
+        """Reconcile content for all pairs returned from Phase 2."""
+        for pair in pairs:
+            if self.sync_mode == "copy":
+                self._sync_pair_copy(pair)
+            else:
+                self._sync_pair_symlink(pair)
+
+    def _sync_pair_symlink(self, pair: FilePair) -> None:
+        """Sync a single file pair in symlink mode."""
+        source = pair.source_file
+        repo = pair.repo_file
+
+        if source.is_symlink():
+            # Already correct — nothing to do.
+            return
+
+        if source.is_file():
+            if not repo.exists():
+                shutil.copy2(source, repo)
+                log.info("[%s] Copied %s into repo", self.name, source.name)
+            elif not filecmp.cmp(source, repo, shallow=False):
+                merge_conflicting_file(local=source, repo=repo)
+            source.unlink()
+            source.symlink_to(repo)
+            log.info("[%s] Symlinked %s", self.name, source.name)
+        elif repo.exists() and not source.exists():
+            source.symlink_to(repo)
+            log.info("[%s] Symlinked %s (from repo)", self.name, repo.name)
+
+    def _sync_pair_copy(self, pair: FilePair) -> None:
+        """Sync a single file pair in copy mode using three-way hash comparison."""
+        source = pair.source_file
+        repo = pair.repo_file
+
+        if source.is_file():
+            if not repo.exists():
+                repo.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, repo)
+                log.info("[%s] Copied %s -> repo (copy mode)", self.name, source.name)
+                key = self._repo_key(repo)
+                self._sync_state.set_hash(key, source.read_text())
+            elif not filecmp.cmp(source, repo, shallow=False):
+                self._three_way_sync(source, repo)
+        elif repo.exists():
+            source.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(repo, source)
+            log.info("[%s] Copied %s -> source (copy mode)", self.name, repo.name)
+            key = self._repo_key(repo)
+            self._sync_state.set_hash(key, repo.read_text())
+
+    # ======================================================================
+    # INTERNAL UTILITIES
+    # ======================================================================
 
     def _should_exclude(self, name: str) -> bool:
         """Check if a file/dir name matches the exclude list."""
@@ -86,149 +293,6 @@ class GenericTarget(SyncTarget):
     def _matches_patterns(self, name: str) -> bool:
         """Check if a filename matches any of the file_patterns."""
         return any(fnmatch.fnmatch(name, pat) for pat in self.file_patterns)
-
-    def _adopt_directory(self, source_dir: Path, repo_dir: Path) -> None:
-        """Adopt files from source_dir into repo_dir, replacing originals with symlinks."""
-        repo_dir.mkdir(parents=True, exist_ok=True)
-
-        for item in sorted(source_dir.iterdir()):
-            if self._should_exclude(item.name):
-                continue
-
-            if item.is_symlink():
-                # Already a symlink — verify it points into our repo
-                continue
-
-            if item.is_dir():
-                # Recurse into subdirectories (e.g. memory/)
-                self._adopt_directory(item, repo_dir / item.name)
-                continue
-
-            if not self._matches_patterns(item.name):
-                continue
-
-            dest = repo_dir / item.name
-            if not dest.exists():
-                shutil.copy2(item, dest)
-                log.info("[%s] Copied %s into repo", self.name, item.name)
-            elif not filecmp.cmp(item, dest, shallow=False):
-                merge_conflicting_file(local=item, repo=dest)
-
-            # Replace original with symlink
-            item.unlink()
-            item.symlink_to(dest)
-            log.info("[%s] Symlinked %s", self.name, item.name)
-
-        # Also create symlinks for repo files that don't exist in source
-        # (pulled from another device)
-        for repo_file in sorted(repo_dir.iterdir()):
-            if repo_file.is_dir():
-                # Ensure source subdir exists and recurse
-                source_subdir = source_dir / repo_file.name
-                if not source_subdir.exists():
-                    source_subdir.mkdir(parents=True, exist_ok=True)
-                if not source_subdir.is_symlink():
-                    self._adopt_directory(source_subdir, repo_file)
-                continue
-
-            if not self._matches_patterns(repo_file.name):
-                continue
-
-            source_file = source_dir / repo_file.name
-            if source_file.is_symlink():
-                if source_file.resolve() == repo_file.resolve():
-                    # Already correct — nothing to do
-                    continue
-                # Broken or wrong symlink — replace it
-                source_file.unlink()
-            elif source_file.exists():
-                # Regular file — leave it for the adoption loop above to handle
-                continue
-            source_file.symlink_to(repo_file)
-            log.info("[%s] Symlinked %s (from repo)", self.name, repo_file.name)
-
-    def _adopt_directory_copy(self, source_dir: Path, repo_dir: Path) -> None:
-        """Bidirectional copy sync: keep source and repo in sync without symlinks.
-
-        - Files only in source → copy to repo
-        - Files only in repo → copy to source
-        - Files in both with different content → delegate to merge_conflicting_file
-        - Symlinks in source (leftovers from prior symlink mode) → migrate to real copies
-        """
-        repo_dir.mkdir(parents=True, exist_ok=True)
-
-        # Pass 1: source → repo
-        for item in sorted(source_dir.iterdir()):
-            if self._should_exclude(item.name):
-                continue
-
-            if item.is_dir():
-                self._adopt_directory_copy(item, repo_dir / item.name)
-                continue
-
-            if not self._matches_patterns(item.name):
-                continue
-
-            dest = repo_dir / item.name
-
-            if item.is_symlink():
-                # Leftover symlink from previous symlink mode — migrate to real copy.
-                real_content = item.resolve()
-                item.unlink()
-                if real_content.exists():
-                    shutil.copy2(real_content, item)
-                    log.info("[%s] Migrated symlink -> real file: %s", self.name, item.name)
-                elif dest.exists():
-                    shutil.copy2(dest, item)
-                    log.info(
-                        "[%s] Symlink target missing, restored from repo: %s",
-                        self.name,
-                        item.name,
-                    )
-                else:
-                    log.warning(
-                        "[%s] Symlink %s has no resolvable target, skipping",
-                        self.name,
-                        item.name,
-                    )
-                    continue
-
-            if not dest.exists():
-                shutil.copy2(item, dest)
-                log.info("[%s] Copied %s -> repo (copy mode)", self.name, item.name)
-                key = self._repo_key(dest)
-                self._sync_state.set_hash(key, item.read_text())
-            elif not filecmp.cmp(item, dest, shallow=False):
-                self._three_way_sync(item, dest)
-
-        # Pass 2: repo → source (files that exist only in repo, e.g. from another device)
-        for repo_file in sorted(repo_dir.iterdir()):
-            if repo_file.is_dir():
-                source_subdir = source_dir / repo_file.name
-                source_subdir.mkdir(parents=True, exist_ok=True)
-                self._adopt_directory_copy(source_subdir, repo_file)
-                continue
-
-            if not self._matches_patterns(repo_file.name):
-                continue
-
-            source_file = source_dir / repo_file.name
-
-            if source_file.is_symlink():
-                # Another leftover symlink — replace with real copy from repo
-                source_file.unlink()
-                shutil.copy2(repo_file, source_file)
-                log.info(
-                    "[%s] Replaced leftover symlink with copy from repo: %s",
-                    self.name,
-                    repo_file.name,
-                )
-            elif not source_file.exists():
-                shutil.copy2(repo_file, source_file)
-                log.info("[%s] Copied %s -> source (copy mode)", self.name, repo_file.name)
-                key = self._repo_key(repo_file)
-                self._sync_state.set_hash(key, repo_file.read_text())
-            # If source_file exists as a regular file it was already handled in Pass 1
 
     def _repo_key(self, repo_file: Path) -> str:
         """Return the data_dir-relative path as a stable key for hash storage."""
@@ -257,13 +321,11 @@ class GenericTarget(SyncTarget):
         base_hash = self._sync_state.get_hash(key)
 
         if source_hash == repo_hash:
-            # Files are identical — just make sure hash is recorded.
             if base_hash != source_hash:
                 self._sync_state.set_hash(key, source_content)
             return
 
         if base_hash is None:
-            # First sync: no history — source wins.
             shutil.copy2(source, repo)
             log.info("[%s] First sync, source wins: %s", self.name, source.name)
             self._sync_state.set_hash(key, source_content)
@@ -281,7 +343,7 @@ class GenericTarget(SyncTarget):
             log.info("[%s] Repo updated, copying to source: %s", self.name, repo.name)
             self._sync_state.set_hash(key, repo_content)
         else:
-            # Both sides changed — real conflict.
             merge_conflicting_file(local=source, repo=repo)
             merged_content = repo.read_text()
             self._sync_state.set_hash(key, merged_content)
+

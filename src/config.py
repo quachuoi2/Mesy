@@ -84,6 +84,7 @@ def get_mesy_settings(cfg: ConfigParser) -> dict:
 
 
 def load_project_mappings(data_dir: Path) -> dict[str, str]:
+    """Claude Code memory config loading"""
     """Load projects.conf from data_dir and return {raw_claude_name: canonical_name} mapping."""
     projects_conf = data_dir / "claude" / "projects.conf"
     mapping = {}

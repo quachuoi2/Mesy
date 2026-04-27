@@ -39,16 +39,17 @@ def claude_env(tmp_path, tmp_repo, monkeypatch):
     """Full Claude Code test environment with injected paths."""
     claude_dir = tmp_path / "claude"
     projects_dir = claude_dir / "projects"
-    pending_dir = tmp_repo / "claude" / "projects" / ".pending"
+    scratch_dir = tmp_path / "scratch"
 
     claude_dir.mkdir(parents=True)
     projects_dir.mkdir(parents=True)
+    scratch_dir.mkdir(parents=True)
 
     return {
         "repo": tmp_repo,
         "claude_dir": claude_dir,
         "projects_dir": projects_dir,
-        "pending_dir": pending_dir,
+        "scratch_dir": scratch_dir,
     }
 
 

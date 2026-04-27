@@ -26,10 +26,6 @@ Mesy/
 │   │   ├── CLAUDE.md              # Synced from ~/.claude/projects/<raw>/CLAUDE.md
 │   │   ├── MEMORY.md
 │   │   └── *.md
-│   └── .pending/                  # Unmapped projects staged here until mapped
-│       └── -some-raw-name/
-│           ├── .needs_mapping     # Marker with instructions
-│           └── *.md
 ├── src/                           # Mesy package (daemon logic)
 │   ├── config.py                  # Configuration loading, REPO_DIR, target parsing
 │   ├── git_utils.py               # Git operations, conflict resolution
@@ -86,9 +82,8 @@ That's it. Memory syncs automatically from that point.
 2. Reads `projects.conf` and symlinks `~/.claude/projects/<raw-name>/memory/` and `CLAUDE.md` → `Mesy/projects/<canonical>/`
 3. Migrates existing raw-named repo directories to canonical names
 4. Migrates any existing local memory into the repo, conflict-merging differing files (nothing is lost)
-5. Stages unmapped projects in `projects/.pending/` with instructions
-6. Installs the sync daemon (systemd on Linux, Task Scheduler on Windows)
-7. Enables lingering so the daemon survives logout (Linux)
+5. Installs the sync daemon (systemd on Linux, Task Scheduler on Windows)
+6. Enables lingering so the daemon survives logout (Linux)
 
 ## What `sync.py` Does
 
@@ -102,8 +97,7 @@ That's it. Memory syncs automatically from that point.
   - **generic**: Flat symlink sync for other tools (e.g., OpenClaw)
 - Auto-detects new Claude Code project memory directories:
   - **Mapped** (in `projects.conf`): adopted into the canonical directory and symlinked
-  - **Unmapped**: staged in `projects/.pending/` with a `.needs_mapping` marker
-- Promotes pending projects when a mapping is added to `projects.conf`
+  - **Unmapped**: flagged with a local `.needs_mapping` marker under `~/.claude/projects/<raw>/`; no repo writes until a mapping is added
 - Safety: verifies file migration before deleting source directories
 - On merge conflicts: keeps both versions and flags with `conflict: true` in frontmatter
 - On file migration conflicts (same filename, different content): merges both versions into one file with conflict markers
@@ -120,7 +114,7 @@ paths = -home-allyqch2-Workspace, -C-Users-allyqch2-Workspace
 paths = -home-allyqch2-Workspace-Alfred, -C-Users-allyqch2-Workspace-Alfred
 ```
 
-When the daemon finds an unmapped project, it stages data in `.pending/` and logs a warning. Add the mapping and the next scan cycle promotes it automatically.
+When the daemon finds an unmapped project, it writes a `.needs_mapping` marker locally and logs a warning. No data is written to the repo until a mapping is added to `projects.conf` and the next scan runs.
 
 ## Configuration
 

@@ -18,7 +18,6 @@ def make_target(claude_env) -> ClaudeCodeTarget:
         data_dir=claude_env["repo"],
         claude_dir=claude_env["claude_dir"],
         projects_dir=claude_env["projects_dir"],
-        pending_dir=claude_env["pending_dir"],
     )
 
 
@@ -95,126 +94,11 @@ class TestScanProjects:
         assert memory_dir.is_symlink()
         assert memory_dir.resolve() == canonical_dir.resolve()
 
-    def test_stages_unmapped_project_in_pending(self, claude_env, monkeypatch):
-        """scan() stages unmapped project memory in .pending with .needs_mapping marker."""
-        raw_name = "-home-user-UnknownProject"
-
-        project_dir = claude_env["projects_dir"] / raw_name
-        memory_dir = project_dir / "memory"
-        memory_dir.mkdir(parents=True)
-        (memory_dir / "data.md").write_text("some data")
-
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-
-        target = make_target(claude_env)
-        target.scan()
-
-        pending_dest = claude_env["pending_dir"] / raw_name
-        assert pending_dest.exists()
-        assert (pending_dest / "data.md").exists()
-        assert (pending_dest / ".needs_mapping").exists()
-        assert memory_dir.is_symlink()
-
-    def test_pending_marker_contains_raw_name(self, claude_env, monkeypatch):
-        """The .needs_mapping marker file contains the raw project name."""
-        raw_name = "-home-user-SomeProject"
-        project_dir = claude_env["projects_dir"] / raw_name
-        memory_dir = project_dir / "memory"
-        memory_dir.mkdir(parents=True)
-        (memory_dir / "file.md").write_text("content")
-
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-
-        target = make_target(claude_env)
-        target.scan()
-
-        marker = (claude_env["pending_dir"] / raw_name / ".needs_mapping").read_text()
-        assert raw_name in marker
-
-
-class TestPromotePending:
-    def test_promotes_pending_to_canonical(self, claude_env, monkeypatch):
-        """_promote_pending() moves pending project files to canonical dir."""
-        raw_name = "-home-user-NewProject"
-        mapping = {raw_name: "NewProject"}
-
-        pending_dir = claude_env["pending_dir"] / raw_name
-        pending_dir.mkdir(parents=True)
-        (pending_dir / "file.md").write_text("pending data")
-        (pending_dir / ".needs_mapping").write_text("raw_name: " + raw_name)
-
-        # Simulate that the project memory symlink is already in place
-        project_dir = claude_env["projects_dir"] / raw_name
-        memory_dir = project_dir / "memory"
-        memory_dir.mkdir(parents=True)
-        memory_dir_symlink = project_dir / "memory"
-
-        # Replace memory with actual symlink to pending
-        shutil.rmtree(str(memory_dir))
-        memory_dir.symlink_to(pending_dir)
-
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
-
-        target = make_target(claude_env)
-        target._promote_pending(mapping)
-
-        canonical_dir = claude_env["repo"] / "claude" / "projects" / "NewProject"
-        assert (canonical_dir / "file.md").exists()
-        assert not pending_dir.exists()
-
-    def test_skips_pending_without_mapping(self, claude_env, monkeypatch):
-        """_promote_pending() leaves pending dirs that still have no mapping."""
-        raw_name = "-home-user-StillUnmapped"
-        pending_dir = claude_env["pending_dir"] / raw_name
-        pending_dir.mkdir(parents=True)
-        (pending_dir / "file.md").write_text("content")
-
-        target = make_target(claude_env)
-        target._promote_pending({})
-
-        assert pending_dir.exists()
-
-
-class TestMigrateRepoToCanonical:
-    def test_renames_raw_dir_to_canonical(self, claude_env, monkeypatch):
-        """_migrate_repo_to_canonical() renames a raw-named dir to canonical name."""
-        raw_name = "-home-user-OldProject"
-        mapping = {raw_name: "OldProject"}
-
-        projects_dir = claude_env["repo"] / "claude" / "projects"
-        raw_dir = projects_dir / raw_name
-        raw_dir.mkdir(parents=True)
-        (raw_dir / "notes.md").write_text("# Old Notes")
-
-        target = make_target(claude_env)
-        target._migrate_repo_to_canonical(mapping)
-
-        canonical_dir = projects_dir / "OldProject"
-        assert canonical_dir.exists()
-        assert (canonical_dir / "notes.md").exists()
-        assert not raw_dir.exists()
-
-    def test_skips_when_canonical_already_exists(self, claude_env):
-        """_migrate_repo_to_canonical() skips renaming if canonical dir already exists."""
-        raw_name = "-home-user-Project"
-        mapping = {raw_name: "Project"}
-
-        projects_dir = claude_env["repo"] / "claude" / "projects"
-        raw_dir = projects_dir / raw_name
-        raw_dir.mkdir(parents=True)
-        canonical_dir = projects_dir / "Project"
-        canonical_dir.mkdir(parents=True)
-        (canonical_dir / "existing.md").write_text("already here")
-
-        target = make_target(claude_env)
-        target._migrate_repo_to_canonical(mapping)
-
-        assert raw_dir.exists()  # not renamed since canonical already exists
 
 
 class TestSyncClaudeMd:
     def test_copies_and_symlinks_project_claude_md(self, claude_env, monkeypatch):
-        """_sync_claude_md() copies project CLAUDE.md to repo and symlinks it."""
+        """_sync_file() copies project CLAUDE.md to repo and symlinks it (symlink mode)."""
         raw_name = "-home-user-Project"
         project_dir = claude_env["projects_dir"] / raw_name
         project_dir.mkdir(parents=True)
@@ -225,15 +109,15 @@ class TestSyncClaudeMd:
         repo_dir.mkdir(parents=True)
 
         target = make_target(claude_env)
-        target._sync_claude_md(project_dir, repo_dir)
-
         repo_claude = repo_dir / "CLAUDE.md"
+        target._sync_file(local_claude, repo_claude, label=f"CLAUDE.md for {raw_name}")
+
         assert repo_claude.exists()
         assert local_claude.is_symlink()
         assert local_claude.resolve() == repo_claude.resolve()
 
     def test_skips_if_already_symlinked(self, claude_env):
-        """_sync_claude_md() does nothing if CLAUDE.md is already a symlink."""
+        """_sync_file() does nothing if CLAUDE.md is already a symlink (symlink mode)."""
         raw_name = "-home-user-Project"
         project_dir = claude_env["projects_dir"] / raw_name
         project_dir.mkdir(parents=True)
@@ -247,7 +131,7 @@ class TestSyncClaudeMd:
         local_claude.symlink_to(repo_claude)
 
         target = make_target(claude_env)
-        target._sync_claude_md(project_dir, repo_dir)
+        target._sync_file(local_claude, repo_claude, label=f"CLAUDE.md for {raw_name}")
 
         # Symlink should still resolve to the same place
         assert local_claude.is_symlink()
@@ -256,7 +140,7 @@ class TestSyncClaudeMd:
 
 class TestSafetyVerification:
     def test_rmtree_skipped_on_failed_migration(self, claude_env, monkeypatch, caplog):
-        """rmtree is NOT called when migration verification fails."""
+        """rmtree is NOT called when _verify_migration returns False."""
         import logging
 
         raw_name = "-home-user-BrokenProject"
@@ -267,13 +151,10 @@ class TestSafetyVerification:
         memory_dir.mkdir(parents=True)
         (memory_dir / "important.md").write_text("critical data")
 
-        # _verify_migration will fail because we'll make _migrate_memory_to_dir do nothing
-        def fake_migrate(src, dst):
-            pass  # Don't actually copy files
-
+        # Force _verify_migration to return False so the safety gate fires.
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
         target = make_target(claude_env)
-        monkeypatch.setattr(target, "_migrate_memory_to_dir", fake_migrate)
+        monkeypatch.setattr(target, "_verify_migration", lambda src, dst: False)
 
         with caplog.at_level(logging.ERROR, logger="mesy"):
             target.scan()
@@ -292,200 +173,8 @@ def make_copy_target(claude_env) -> ClaudeCodeTarget:
         data_dir=claude_env["repo"],
         claude_dir=claude_env["claude_dir"],
         projects_dir=claude_env["projects_dir"],
-        pending_dir=claude_env["pending_dir"],
         sync_mode="copy",
     )
-
-
-class TestSyncFileCopy:
-    def test_local_to_repo_copy(self, claude_env, monkeypatch):
-        """_sync_file_copy copies local file to repo when repo is missing."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-        target = make_copy_target(claude_env)
-
-        local = claude_env["claude_dir"] / "CLAUDE.md"
-        local.write_text("# Local content")
-        repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
-
-        target._sync_file_copy(local, repo, label="test file")
-
-        assert repo.exists()
-        assert repo.read_text() == "# Local content"
-        assert not local.is_symlink()
-
-    def test_repo_to_local_copy(self, claude_env, monkeypatch):
-        """_sync_file_copy copies repo file to local when local is missing."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-        target = make_copy_target(claude_env)
-
-        global_dir = claude_env["repo"] / "claude" / "global"
-        repo = global_dir / "CLAUDE.md"
-        repo.write_text("# Repo content")
-        local = claude_env["claude_dir"] / "CLAUDE.md"
-
-        target._sync_file_copy(local, repo, label="test file")
-
-        assert local.exists()
-        assert local.read_text() == "# Repo content"
-        assert not local.is_symlink()
-
-    def test_symlink_migrated_to_real_file(self, claude_env, monkeypatch):
-        """_sync_file_copy resolves a leftover symlink to a real file."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-        target = make_copy_target(claude_env)
-
-        real_file = claude_env["claude_dir"] / "real_content.md"
-        real_file.write_text("# Real content")
-        local = claude_env["claude_dir"] / "CLAUDE.md"
-        local.symlink_to(real_file)
-        assert local.is_symlink()
-
-        repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
-
-        target._sync_file_copy(local, repo, label="test file")
-
-        assert not local.is_symlink()
-        assert local.is_file()
-        assert local.read_text() == "# Real content"
-        assert repo.read_text() == "# Real content"
-
-    def test_symlink_with_missing_target_restored_from_repo(self, claude_env, monkeypatch):
-        """_sync_file_copy replaces broken symlink with copy from repo."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-        target = make_copy_target(claude_env)
-
-        local = claude_env["claude_dir"] / "CLAUDE.md"
-        local.symlink_to(claude_env["claude_dir"] / "nonexistent.md")
-        assert local.is_symlink()
-        assert not local.exists()
-
-        repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
-        repo.write_text("# Repo fallback")
-
-        target._sync_file_copy(local, repo, label="test file")
-
-        assert not local.is_symlink()
-        assert local.read_text() == "# Repo fallback"
-
-    def test_conflict_delegates_to_merge(self, claude_env, monkeypatch):
-        """_sync_file_copy calls merge_conflicting_file when both files differ."""
-        merge_calls = []
-
-        def fake_merge(local, repo):
-            merge_calls.append((local, repo))
-
-        monkeypatch.setattr("src.targets.claude_code.merge_conflicting_file", fake_merge)
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-        target = make_copy_target(claude_env)
-
-        local = claude_env["claude_dir"] / "CLAUDE.md"
-        local.write_text("# Local version")
-        repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
-        repo.write_text("# Repo version (different)")
-
-        target._sync_file_copy(local, repo, label="test file")
-
-        assert len(merge_calls) == 1
-        assert merge_calls[0][0] == local
-        assert merge_calls[0][1] == repo
-
-    def test_broken_symlink_no_repo_fallback_skipped(self, claude_env, monkeypatch, caplog):
-        """_sync_file_copy skips a broken symlink when there is no repo file to restore from."""
-        import logging
-
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-        target = make_copy_target(claude_env)
-
-        local = claude_env["claude_dir"] / "CLAUDE.md"
-        local.symlink_to(claude_env["claude_dir"] / "ghost.md")
-
-        repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
-        # repo does NOT exist
-
-        with caplog.at_level(logging.WARNING, logger="mesy"):
-            target._sync_file_copy(local, repo, label="test file")
-
-        assert not repo.exists()
-
-
-class TestCopyDirFiles:
-    def test_copies_all_files_from_source_to_dest(self, claude_env, monkeypatch):
-        """_copy_dir_files copies every non-directory file into dest_dir."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-        target = make_copy_target(claude_env)
-
-        source_dir = claude_env["repo"] / "claude" / "projects" / "SomeProject"
-        source_dir.mkdir(parents=True)
-        (source_dir / "notes.md").write_text("# Notes")
-        (source_dir / "todo.md").write_text("# Todo")
-
-        dest_dir = claude_env["projects_dir"] / "-home-user-SomeProject" / "memory"
-        dest_dir.mkdir(parents=True)
-
-        target._copy_dir_files(source_dir, dest_dir)
-
-        assert (dest_dir / "notes.md").read_text() == "# Notes"
-        assert (dest_dir / "todo.md").read_text() == "# Todo"
-
-    def test_skips_subdirectories(self, claude_env, monkeypatch):
-        """_copy_dir_files does not recurse into subdirectories."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-        target = make_copy_target(claude_env)
-
-        source_dir = claude_env["repo"] / "claude" / "projects" / "SomeProject"
-        source_dir.mkdir(parents=True)
-        sub = source_dir / "subdir"
-        sub.mkdir()
-        (sub / "nested.md").write_text("# Nested")
-        (source_dir / "top.md").write_text("# Top")
-
-        dest_dir = claude_env["projects_dir"] / "-home-user-SomeProject" / "memory"
-        dest_dir.mkdir(parents=True)
-
-        target._copy_dir_files(source_dir, dest_dir)
-
-        assert (dest_dir / "top.md").exists()
-        assert not (dest_dir / "subdir").exists()
-
-    def test_conflict_delegates_to_merge(self, claude_env, monkeypatch):
-        """_copy_dir_files calls merge_conflicting_file for files that differ."""
-        merge_calls = []
-
-        def fake_merge(local, repo):
-            merge_calls.append((local, repo))
-
-        monkeypatch.setattr("src.targets.claude_code.merge_conflicting_file", fake_merge)
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-        target = make_copy_target(claude_env)
-
-        source_dir = claude_env["repo"] / "claude" / "projects" / "SomeProject"
-        source_dir.mkdir(parents=True)
-        (source_dir / "notes.md").write_text("# Source version")
-
-        dest_dir = claude_env["projects_dir"] / "-home-user-SomeProject" / "memory"
-        dest_dir.mkdir(parents=True)
-        (dest_dir / "notes.md").write_text("# Dest version (different)")
-
-        target._copy_dir_files(source_dir, dest_dir)
-
-        assert len(merge_calls) == 1
-
-    def test_creates_dest_dir_if_missing(self, claude_env, monkeypatch):
-        """_copy_dir_files creates dest_dir when it doesn't exist yet."""
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-        target = make_copy_target(claude_env)
-
-        source_dir = claude_env["repo"] / "claude" / "projects" / "NewProject"
-        source_dir.mkdir(parents=True)
-        (source_dir / "file.md").write_text("# New")
-
-        dest_dir = claude_env["projects_dir"] / "new_memory"
-        assert not dest_dir.exists()
-
-        target._copy_dir_files(source_dir, dest_dir)
-
-        assert dest_dir.exists()
-        assert (dest_dir / "file.md").exists()
 
 
 class TestCopyModeGlobalClaudeMd:
@@ -535,27 +224,6 @@ class TestCopyModeAdoptProject:
 
         canonical_dir = claude_env["repo"] / "claude" / "projects" / "MyProject"
         assert (canonical_dir / "notes.md").exists()
-        # In copy mode memory_dir must NOT become a symlink
-        assert not memory_dir.is_symlink()
-        assert memory_dir.is_dir()
-
-    def test_copy_mode_unmapped_memory_dir_not_symlinked(self, claude_env, monkeypatch):
-        """copy mode: unmapped project files are staged in .pending but memory_dir is kept."""
-        raw_name = "-home-user-UnknownProject"
-
-        project_dir = claude_env["projects_dir"] / raw_name
-        memory_dir = project_dir / "memory"
-        memory_dir.mkdir(parents=True)
-        (memory_dir / "data.md").write_text("some data")
-
-        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
-
-        target = make_copy_target(claude_env)
-        target.scan()
-
-        pending_dest = claude_env["pending_dir"] / raw_name
-        assert pending_dest.exists()
-        assert (pending_dest / "data.md").exists()
         # In copy mode memory_dir must NOT become a symlink
         assert not memory_dir.is_symlink()
         assert memory_dir.is_dir()
@@ -626,15 +294,14 @@ class TestSymlinkToCopyMigration:
         """copy mode: a symlinked memory_dir for an unmapped project is left untouched."""
         raw_name = "-home-user-UnmappedLinked"
 
-        # Simulate some arbitrary symlink target (e.g., a pending dir)
-        pending_dest = claude_env["pending_dir"] / raw_name
-        pending_dest.mkdir(parents=True)
-        (pending_dest / "data.md").write_text("# Pending data")
+        scratch_dest = claude_env["scratch_dir"] / raw_name
+        scratch_dest.mkdir(parents=True)
+        (scratch_dest / "data.md").write_text("# Scratch data")
 
         project_dir = claude_env["projects_dir"] / raw_name
         project_dir.mkdir(parents=True)
         memory_dir = project_dir / "memory"
-        memory_dir.symlink_to(pending_dest)
+        memory_dir.symlink_to(scratch_dest)
         assert memory_dir.is_symlink()
 
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
@@ -644,7 +311,7 @@ class TestSymlinkToCopyMigration:
 
         # Unmapped symlinked memory_dir must remain as-is
         assert memory_dir.is_symlink()
-        assert memory_dir.resolve() == pending_dest.resolve()
+        assert memory_dir.resolve() == scratch_dest.resolve()
 
 
     def test_dangling_symlink_falls_back_to_canonical_dir(self, claude_env, monkeypatch, caplog):
@@ -679,7 +346,10 @@ class TestSymlinkToCopyMigration:
         assert not memory_dir.is_symlink()
         assert memory_dir.is_dir()
         assert (memory_dir / "restored.md").read_text() == "# From canonical"
-        assert any("Symlink target missing" in r.message for r in caplog.records)
+        assert any(
+            "Symlink target missing" in r.message or "symlink target missing" in r.message
+            for r in caplog.records
+        )
 
     def test_dangling_symlink_with_no_canonical_dir_logs_warning_and_creates_empty_dir(
         self, claude_env, monkeypatch, caplog
@@ -714,7 +384,244 @@ class TestSymlinkToCopyMigration:
         assert not memory_dir.is_symlink()
         assert memory_dir.is_dir()
         assert list(memory_dir.iterdir()) == []
-        assert any("No source data found" in r.message for r in caplog.records)
+        assert any(
+            "No source data found" in r.message or "dangling symlink with no usable fallback" in r.message
+            for r in caplog.records
+        )
+
+
+class TestUnmappedMarker:
+    def test_unmapped_creates_local_needs_mapping_marker(
+        self, claude_env, monkeypatch
+    ) -> None:
+        """Unmapped project: .needs_mapping written inside local project dir.
+
+        No writes to the repo (no .pending/ subtree, no canonical dir).
+        """
+        raw_name = "-home-user-UnknownProject"
+        project_dir = claude_env["projects_dir"] / raw_name
+        memory_dir = project_dir / "memory"
+        memory_dir.mkdir(parents=True)
+        (memory_dir / "data.md").write_text("some data")
+
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+
+        target = make_target(claude_env)
+        target.scan()
+
+        # Marker written locally inside the project dir
+        marker = project_dir / ".needs_mapping"
+        assert marker.exists(), "Expected .needs_mapping inside local project dir"
+        assert raw_name in marker.read_text()
+
+        # Zero repo writes — no .pending/, no canonical dir
+        repo_projects = claude_env["repo"] / "claude" / "projects"
+        assert not (repo_projects / ".pending").exists()
+        assert not (repo_projects / raw_name).exists()
+        # memory_dir must NOT become a symlink
+        assert not memory_dir.is_symlink()
+
+    def test_unmapped_copy_mode_same_behavior(self, claude_env, monkeypatch) -> None:
+        """Unmapped project in copy mode: same local-only marker, no repo writes."""
+        raw_name = "-home-user-CopyUnknown"
+        project_dir = claude_env["projects_dir"] / raw_name
+        memory_dir = project_dir / "memory"
+        memory_dir.mkdir(parents=True)
+        (memory_dir / "file.md").write_text("content")
+
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+
+        target = make_copy_target(claude_env)
+        target.scan()
+
+        marker = project_dir / ".needs_mapping"
+        assert marker.exists()
+        assert raw_name in marker.read_text()
+
+        repo_projects = claude_env["repo"] / "claude" / "projects"
+        assert not (repo_projects / ".pending").exists()
+        assert not (repo_projects / raw_name).exists()
+        assert not memory_dir.is_symlink()
+
+
+class TestPhase1RepoRename:
+    def test_renames_raw_dir_in_repo_to_canonical(self, claude_env, monkeypatch) -> None:
+        """scan() renames a raw-named repo dir to its canonical name via Phase 1."""
+        raw_name = "-home-user-OldProject"
+        mapping = {raw_name: "OldProject"}
+
+        projects_dir = claude_env["repo"] / "claude" / "projects"
+        raw_dir = projects_dir / raw_name
+        raw_dir.mkdir(parents=True)
+        (raw_dir / "notes.md").write_text("# Old Notes")
+
+        monkeypatch.setattr(
+            "src.targets.claude_code.load_project_mappings", lambda **kw: mapping
+        )
+
+        target = make_target(claude_env)
+        target.scan()
+
+        canonical_dir = projects_dir / "OldProject"
+        assert canonical_dir.exists()
+        assert (canonical_dir / "notes.md").exists()
+        assert not raw_dir.exists()
+
+    def test_skips_when_canonical_already_exists(self, claude_env, monkeypatch) -> None:
+        """scan() does not clobber an existing canonical dir if raw dir also exists."""
+        raw_name = "-home-user-Project"
+        mapping = {raw_name: "Project"}
+
+        projects_dir = claude_env["repo"] / "claude" / "projects"
+        raw_dir = projects_dir / raw_name
+        raw_dir.mkdir(parents=True)
+        (raw_dir / "raw.md").write_text("raw data")
+        canonical_dir = projects_dir / "Project"
+        canonical_dir.mkdir(parents=True)
+        (canonical_dir / "existing.md").write_text("already here")
+
+        monkeypatch.setattr(
+            "src.targets.claude_code.load_project_mappings", lambda **kw: mapping
+        )
+
+        target = make_target(claude_env)
+        # scan() would assert the raw dir remains if rename was skipped — but
+        # because the raw name still appears in mapping, _assert_phase1_invariants
+        # will raise.  Catch that so we can still assert the raw dir is intact.
+        try:
+            target.scan()
+        except AssertionError:
+            pass
+
+        # raw_dir must not have been renamed / merged into canonical_dir
+        assert raw_dir.exists(), "raw dir must be left intact to avoid data loss"
+        assert (canonical_dir / "existing.md").exists()
+
+
+class TestPhase1Invariants:
+    def test_raises_when_raw_name_remains_after_phase1(
+        self, claude_env, monkeypatch
+    ) -> None:
+        """_assert_phase1_invariants raises if a raw-named dir persists in the repo.
+
+        We simulate a failed rename by monkeypatching _migrate_repo_names to be
+        a no-op, then calling _assert_phase1_invariants directly.
+        """
+        raw_name = "-home-user-Stuck"
+        mapping = {raw_name: "Stuck"}
+
+        projects_dir = claude_env["repo"] / "claude" / "projects"
+        (projects_dir / raw_name).mkdir()
+
+        monkeypatch.setattr(
+            "src.targets.claude_code.load_project_mappings", lambda **kw: mapping
+        )
+        target = make_target(claude_env)
+
+        with pytest.raises(AssertionError, match="Phase 1 invariant violated"):
+            target._assert_phase1_invariants(mapping)
+
+
+class TestSyncFile:
+    """Phase 3 _sync_file coverage in copy mode (behavioral replacement for TestSyncFileCopy)."""
+
+    def test_copy_mode_local_to_repo_when_repo_missing(
+        self, claude_env, monkeypatch
+    ) -> None:
+        """copy mode: local file copied to repo when repo file is absent."""
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+        target = make_copy_target(claude_env)
+
+        local = claude_env["claude_dir"] / "CLAUDE.md"
+        local.write_text("# Local content")
+        repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
+        assert not repo.exists()
+
+        target._sync_file(local, repo, label="test file")
+
+        assert repo.read_text() == "# Local content"
+        assert not local.is_symlink()
+
+    def test_copy_mode_repo_to_local_when_local_missing(
+        self, claude_env, monkeypatch
+    ) -> None:
+        """copy mode: repo file copied to local when local file is absent."""
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+        target = make_copy_target(claude_env)
+
+        repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
+        repo.write_text("# Repo content")
+        local = claude_env["claude_dir"] / "CLAUDE.md"
+        assert not local.exists()
+
+        target._sync_file(local, repo, label="test file")
+
+        assert local.read_text() == "# Repo content"
+        assert not local.is_symlink()
+
+    def test_copy_mode_conflict_delegates_to_merge(
+        self, claude_env, monkeypatch
+    ) -> None:
+        """copy mode: diverged files trigger merge_conflicting_file."""
+        merge_calls: list[tuple[Path, Path]] = []
+
+        def fake_merge(local: Path, repo: Path) -> None:
+            merge_calls.append((local, repo))
+
+        monkeypatch.setattr("src.targets.claude_code.merge_conflicting_file", fake_merge)
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+        target = make_copy_target(claude_env)
+
+        local = claude_env["claude_dir"] / "CLAUDE.md"
+        local.write_text("# Local version")
+        repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
+        repo.write_text("# Repo version (different)")
+
+        target._sync_file(local, repo, label="test file")
+
+        assert len(merge_calls) == 1
+        assert merge_calls[0] == (local, repo)
+
+
+class TestSyncDir:
+    """Phase 3 _sync_dir coverage in copy mode — behavioral replacement for TestCopyDirFiles."""
+
+    def test_copy_mode_dir_sync_conflict_delegates_to_merge(
+        self, claude_env, monkeypatch
+    ) -> None:
+        """copy mode: files that differ between local and repo trigger merge."""
+        merge_calls: list[tuple[Path, Path]] = []
+
+        def fake_merge(local: Path, repo: Path) -> None:
+            merge_calls.append((local, repo))
+
+        monkeypatch.setattr("src.targets.claude_code.merge_conflicting_file", fake_merge)
+
+        raw_name = "-home-user-ConflictProject"
+        mapping = {raw_name: "ConflictProject"}
+
+        # canonical dir with a file already in repo
+        canonical_dir = claude_env["repo"] / "claude" / "projects" / "ConflictProject"
+        canonical_dir.mkdir(parents=True)
+        (canonical_dir / "notes.md").write_text("# Repo version")
+
+        # local memory dir with conflicting file
+        project_dir = claude_env["projects_dir"] / raw_name
+        memory_dir = project_dir / "memory"
+        memory_dir.mkdir(parents=True)
+        (memory_dir / "notes.md").write_text("# Local version (different)")
+
+        monkeypatch.setattr(
+            "src.targets.claude_code.load_project_mappings", lambda **kw: mapping
+        )
+
+        target = make_copy_target(claude_env)
+        target.scan()
+
+        # merge must have been called for the conflicting file
+        assert any(p.name == "notes.md" for p, _ in merge_calls), (
+            "Expected merge_conflicting_file to be called for notes.md"
+        )
 
 
 class TestGetStageDirs:
