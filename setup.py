@@ -71,6 +71,72 @@ def _write_repos_conf(cfg: ConfigParser) -> None:
         cfg.write(f)
 
 
+def _setup_git_sync(data_dir: Path) -> None:
+    """Prompt for a git remote URL and initialize sync for `data_dir`.
+
+    Skips if the directory is already a git repo. If the user gives a blank
+    URL, warns that sync won't run until git is configured manually.
+    """
+    if (data_dir / ".git").exists():
+        log("ok", f"{data_dir} is already a git repo — skipping remote setup")
+        return
+
+    url = input(
+        "Git remote URL for this repo (e.g. git@github.com:you/repo.git, blank to skip): "
+    ).strip()
+    if not url:
+        log("warn", f"No remote configured — {data_dir} will not sync until you set one up")
+        return
+
+    is_empty = not any(data_dir.iterdir())
+    if is_empty:
+        data_dir.rmdir()
+        result = subprocess.run(
+            ["git", "clone", url, str(data_dir)],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            log("error", f"git clone failed: {result.stderr.strip()}")
+            data_dir.mkdir(parents=True, exist_ok=True)
+            return
+        log("ok", f"Cloned {url} into {data_dir}")
+        return
+
+    def _git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(data_dir), *args],
+            capture_output=True, text=True,
+        )
+
+    if _git("init").returncode != 0:
+        log("error", "git init failed")
+        return
+    if _git("remote", "add", "origin", url).returncode != 0:
+        log("error", "git remote add failed")
+        return
+
+    fetch = _git("fetch", "origin")
+    if fetch.returncode != 0:
+        log("warn", f"git fetch failed: {fetch.stderr.strip()} — leaving repo initialized")
+        return
+
+    # Determine remote default branch (fall back to main).
+    head = _git("symbolic-ref", "refs/remotes/origin/HEAD")
+    if head.returncode == 0 and head.stdout.strip():
+        branch = head.stdout.strip().rsplit("/", 1)[-1]
+    else:
+        branch = "main"
+
+    _git("checkout", "-b", branch)
+    pull = _git("pull", "origin", branch, "--allow-unrelated-histories")
+    if pull.returncode != 0:
+        log("warn", f"git pull failed: {pull.stderr.strip()}")
+        return
+
+    _git("branch", f"--set-upstream-to=origin/{branch}", branch)
+    log("ok", f"Initialized {data_dir} with remote {url} (branch {branch})")
+
+
 def _repo_path_valid(raw: str) -> Path | None:
     """Resolve the user-provided path. Reject if it resolves inside REPO_DIR.
 
@@ -145,6 +211,8 @@ def prompt_repos_conf() -> list[dict]:
                 continue
 
             break
+
+        _setup_git_sync(resolved)
 
         section = f"repo:{name}"
         cfg[section] = {"path": str(resolved)}

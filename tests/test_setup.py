@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from configparser import ConfigParser
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -48,6 +49,7 @@ def test_prompt_repos_conf_appends_without_clobbering(tmp_code_repo, tmp_path, m
             "y",              # add another?
             "newbie",         # name
             str(new_path),    # path
+            "",               # git remote (skip)
             "n",              # add another? (done)
         ],
     )
@@ -76,6 +78,7 @@ def test_prompt_repos_conf_rejects_path_inside_repo_dir(tmp_code_repo, tmp_path,
             "repo1",            # name
             str(inside),        # bad path (inside REPO_DIR)
             str(outside),       # retry with valid path
+            "",                 # git remote (skip)
             "n",                # add another? done
         ],
     )
@@ -104,6 +107,7 @@ def test_prompt_repos_conf_rejects_symlink_that_resolves_inside(tmp_code_repo, t
             "r1",               # name
             str(link),          # symlink resolving inside
             str(outside),       # valid path
+            "",                 # git remote (skip)
             "n",
         ],
     )
@@ -162,6 +166,86 @@ def test_ensure_sync_conf_skips_when_declined(tmp_path, monkeypatch):
 
     assert setup.ensure_sync_conf(data_dir) is False
     assert not (data_dir / "sync.conf").exists()
+
+
+def test_setup_git_sync_clones_when_dir_empty(tmp_path, monkeypatch):
+    """Empty target dir + remote URL → git clone is invoked."""
+    data_dir = tmp_path / "Empty"
+    data_dir.mkdir()
+
+    _feed_input(monkeypatch, ["git@github.com:me/r.git"])
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        # Recreate the dir so the test's assertions hold.
+        if cmd[:2] == ["git", "clone"]:
+            Path(cmd[3]).mkdir(parents=True, exist_ok=True)
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    setup._setup_git_sync(data_dir)
+
+    assert calls[0][:2] == ["git", "clone"]
+    assert "git@github.com:me/r.git" in calls[0]
+
+
+def test_setup_git_sync_inits_when_dir_nonempty(tmp_path, monkeypatch):
+    """Non-empty dir + remote URL → init + remote add + fetch + pull."""
+    data_dir = tmp_path / "Existing"
+    data_dir.mkdir()
+    (data_dir / "stale.md").write_text("hi")
+
+    _feed_input(monkeypatch, ["https://example.com/r.git"])
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return type("R", (), {"returncode": 0, "stdout": "refs/remotes/origin/main", "stderr": ""})()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    setup._setup_git_sync(data_dir)
+
+    invoked = [tuple(c[3:]) for c in calls]  # strip ["git","-C",dir]
+    assert ("init",) in invoked
+    assert ("remote", "add", "origin", "https://example.com/r.git") in invoked
+    assert ("fetch", "origin") in invoked
+
+
+def test_setup_git_sync_skips_existing_repo(tmp_path, monkeypatch):
+    """If `.git` already exists, no prompt is issued and no commands run."""
+    data_dir = tmp_path / "AlreadyRepo"
+    (data_dir / ".git").mkdir(parents=True)
+
+    # No input expected — _feed_input with empty iter would raise on consume.
+    _feed_input(monkeypatch, [])
+
+    called = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: called.append(a) or None)
+
+    setup._setup_git_sync(data_dir)
+
+    assert called == []
+
+
+def test_setup_git_sync_blank_url_skips(tmp_path, monkeypatch):
+    """Blank URL → warn and do nothing destructive."""
+    data_dir = tmp_path / "Blank"
+    data_dir.mkdir()
+
+    _feed_input(monkeypatch, [""])
+
+    called = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: called.append(a) or None)
+
+    setup._setup_git_sync(data_dir)
+
+    assert called == []
+    assert data_dir.exists()
 
 
 def test_setup_repo_skips_duplicate_target_types(tmp_path, monkeypatch, capsys):
