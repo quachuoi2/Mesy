@@ -391,12 +391,13 @@ class TestSymlinkToCopyMigration:
 
 
 class TestUnmappedMarker:
-    def test_unmapped_creates_local_needs_mapping_marker(
+    def test_unmapped_records_in_shared_pending_file(
         self, claude_env, monkeypatch
     ) -> None:
-        """Unmapped project: .needs_mapping written inside local project dir.
+        """Unmapped project: raw name appended to ``<repo>/claude/projects/.pending``.
 
-        No writes to the repo (no .pending/ subtree, no canonical dir).
+        Nothing written under ``~/.claude/`` (no local marker), and no
+        per-project canonical or sub-dir created in the repo.
         """
         raw_name = "-home-user-UnknownProject"
         project_dir = claude_env["projects_dir"] / raw_name
@@ -409,20 +410,22 @@ class TestUnmappedMarker:
         target = make_target(claude_env)
         target.scan()
 
-        # Marker written locally inside the project dir
-        marker = project_dir / ".needs_mapping"
-        assert marker.exists(), "Expected .needs_mapping inside local project dir"
-        assert raw_name in marker.read_text()
-
-        # Zero repo writes — no .pending/, no canonical dir
         repo_projects = claude_env["repo"] / "claude" / "projects"
-        assert not (repo_projects / ".pending").exists()
+        pending_file = repo_projects / ".pending"
+        assert pending_file.is_file(), "Expected shared .pending file in repo"
+        text = pending_file.read_text()
+        assert f"paths = {raw_name}" in text
+        assert "source:" in text
+        assert "discovered:" in text
+
+        # No legacy local marker, no canonical dir, no per-project pending dir
+        assert not (project_dir / ".needs_mapping").exists()
         assert not (repo_projects / raw_name).exists()
-        # memory_dir must NOT become a symlink
+        assert not (repo_projects / ".pending" / raw_name).exists()
         assert not memory_dir.is_symlink()
 
     def test_unmapped_copy_mode_same_behavior(self, claude_env, monkeypatch) -> None:
-        """Unmapped project in copy mode: same local-only marker, no repo writes."""
+        """Copy mode: identical behaviour — repo .pending file, no local marker."""
         raw_name = "-home-user-CopyUnknown"
         project_dir = claude_env["projects_dir"] / raw_name
         memory_dir = project_dir / "memory"
@@ -434,14 +437,41 @@ class TestUnmappedMarker:
         target = make_copy_target(claude_env)
         target.scan()
 
-        marker = project_dir / ".needs_mapping"
-        assert marker.exists()
-        assert raw_name in marker.read_text()
+        pending_file = claude_env["repo"] / "claude" / "projects" / ".pending"
+        assert pending_file.is_file()
+        assert f"paths = {raw_name}" in pending_file.read_text()
 
-        repo_projects = claude_env["repo"] / "claude" / "projects"
-        assert not (repo_projects / ".pending").exists()
-        assert not (repo_projects / raw_name).exists()
+        assert not (project_dir / ".needs_mapping").exists()
         assert not memory_dir.is_symlink()
+
+    def test_unmapped_dedup_and_prune_when_mapped(self, claude_env, monkeypatch) -> None:
+        """Re-running with a mapping added drops the entry from .pending."""
+        raw_name = "-home-user-LaterMapped"
+        project_dir = claude_env["projects_dir"] / raw_name
+        (project_dir / "memory").mkdir(parents=True)
+        (project_dir / "memory" / "x.md").write_text("x")
+
+        # First scan — unmapped, recorded in .pending
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+        target = make_target(claude_env)
+        target.scan()
+
+        pending_file = claude_env["repo"] / "claude" / "projects" / ".pending"
+        assert pending_file.is_file()
+        first_text = pending_file.read_text()
+        assert first_text.count(f"paths = {raw_name}") == 1
+
+        # Second scan — same raw name, still unmapped: dedup (no duplicate snippet)
+        target.scan()
+        assert pending_file.read_text().count(f"paths = {raw_name}") == 1
+
+        # Third scan — mapping added: snippet pruned, file removed (was sole entry)
+        monkeypatch.setattr(
+            "src.targets.claude_code.load_project_mappings",
+            lambda **kw: {raw_name: "LaterMapped"},
+        )
+        target.scan()
+        assert not pending_file.exists()
 
 
 class TestPhase1RepoRename:

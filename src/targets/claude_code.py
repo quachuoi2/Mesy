@@ -5,12 +5,11 @@ from __future__ import annotations
 import filecmp
 import logging
 import shutil
-import socket
-from datetime import datetime, timezone
 from pathlib import Path
 
 from src.config import load_project_mappings
 from src.git_utils import merge_conflicting_file
+from src.pending import add_pending, pending_path, prune_pending
 from src.targets._migration import ProjectPair, ensure_real_dir, ensure_real_file
 from src.targets.base import SyncTarget
 
@@ -55,13 +54,15 @@ class ClaudeCodeTarget(SyncTarget):
         # ------------------------------------------------------------------
         # PHASE 1: MIGRATION (repo-side)
         # Bring repo dir names to canonical shape.  Idempotent.
+        # Also drop pending snippets for projects that have since been mapped.
         # ------------------------------------------------------------------
         self._migrate_repo_names(mapping)
+        prune_pending(self.repo_base, mapping)
 
         # ------------------------------------------------------------------
         # PHASE 2: ADOPTION
         # Walk source, fix cross-mode shape drift for mapped projects,
-        # flag unmapped with a local-only marker, yield (local, repo) pairs.
+        # record unmapped in repo-side .pending file, yield (local, repo) pairs.
         # ------------------------------------------------------------------
         if not self.projects_dir.exists():
             pairs: list[ProjectPair] = []
@@ -132,7 +133,7 @@ class ClaudeCodeTarget(SyncTarget):
     # ======================================================================
     # PHASE 2: ADOPTION
     # Walk source, fix cross-mode shape drift for mapped projects,
-    # flag unmapped with local marker, yield (local, repo) pairs.
+    # record unmapped in repo .pending file, yield (local, repo) pairs.
     # ======================================================================
 
     def _walk_and_adopt(self, mapping: dict[str, str]) -> list[ProjectPair]:
@@ -140,8 +141,8 @@ class ClaudeCodeTarget(SyncTarget):
 
         For mapped projects: use ensure_real_* to fix cross-mode shape drift
         (symlink leftover from a prior sync_mode change) before yielding.
-        For unmapped projects: write a local-side .needs_mapping marker and
-        do NOT yield a pair — Phase 3 never sees unmapped projects.
+        For unmapped projects: append the raw name to the shared repo
+        ``.pending`` file and do NOT yield a pair — Phase 3 never sees them.
         """
         pairs: list[ProjectPair] = []
         for project_dir in self.projects_dir.iterdir():
@@ -158,7 +159,7 @@ class ClaudeCodeTarget(SyncTarget):
         """Classify a single project dir; return a ProjectPair if mapped, else None.
 
         Applies ensure_real_* shape-fixes for mapped projects in copy mode.
-        Writes a local .needs_mapping marker for unmapped projects.
+        Records unmapped projects in the repo-side ``.pending`` file.
         """
         raw_name = project_dir.name
         memory_dir = project_dir / "memory"
@@ -189,36 +190,21 @@ class ClaudeCodeTarget(SyncTarget):
                 repo_dir=canonical_dir,
             )
 
-        # Unmapped — write local-side marker only.  No repo writes.
+        # Unmapped — record in shared repo .pending file.  No local writes.
         self._flag_unmapped(project_dir)
         return None
 
     def _flag_unmapped(self, project_dir: Path) -> None:
-        """Write a .needs_mapping marker inside the local project dir.
-
-        The marker is written to ~/.claude/projects/<raw>/.needs_mapping.
-        Nothing is written to the repo.
-        """
-        marker = project_dir / ".needs_mapping"
-        if marker.exists():
-            return  # Already flagged — don't overwrite with a fresh timestamp.
-        hostname = socket.gethostname()
-        now = datetime.now(timezone.utc).isoformat()
+        """Record an unmapped project in the shared repo ``.pending`` file."""
         raw_name = project_dir.name
-        marker.write_text(
-            f"source: {hostname}\n"
-            f"discovered: {now}\n"
-            f"raw_name: {raw_name}\n"
-            f"\n"
-            f"Add a mapping in projects.conf:\n"
-            f"  [YourProjectName]\n"
-            f"  paths = {raw_name}\n"
-        )
-        log.warning(
-            "Unmapped project: %s — wrote .needs_mapping marker. "
-            "Add a mapping in projects.conf to sync this project.",
-            raw_name,
-        )
+        added = add_pending(self.repo_base, raw_name)
+        if added:
+            log.warning(
+                "Unmapped project: %s — recorded in %s. "
+                "Add a mapping in projects.conf to sync this project.",
+                raw_name,
+                pending_path(self.repo_base),
+            )
 
     # ======================================================================
     # PHASE 3: SYNC

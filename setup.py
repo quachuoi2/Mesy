@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.config import load_project_mappings, load_repos
+from src.pending import add_pending
 
 REPO_DIR = Path(__file__).resolve().parent
 REPOS_CONF_PATH = REPO_DIR / "repos.conf"
@@ -478,23 +479,8 @@ def setup_claude_code_symlinks(data_dir: Path) -> None:
                     canonical_dir / "CLAUDE.md",
                 )
             elif memory_path.is_dir():
-                pending_dir = data_dir / "claude" / "projects" / ".pending" / raw_name
-                pending_dir.mkdir(parents=True, exist_ok=True)
-                make_symlink(memory_path, pending_dir)
-                marker = pending_dir / ".needs_mapping"
-                if not marker.exists():
-                    hostname = socket.gethostname()
-                    now = datetime.now(timezone.utc).isoformat()
-                    marker.write_text(
-                        f"source: {hostname}\n"
-                        f"discovered: {now}\n"
-                        f"raw_name: {raw_name}\n"
-                        f"\n"
-                        f"Add a mapping in projects.conf:\n"
-                        f"  [YourProjectName]\n"
-                        f"  paths = {raw_name}\n"
-                    )
-                log("pending", f"{raw_name} has no mapping — staged in .pending/")
+                add_pending(data_dir, raw_name)
+                log("pending", f"{raw_name} has no mapping — recorded in .pending file")
                 log("info", f"  Add to projects.conf: [YourProjectName] / paths = {raw_name}")
 
     for raw_name, canonical in mapping.items():
