@@ -22,6 +22,12 @@ def has_local_changes(data_dir: Path) -> bool:
     return bool(result.stdout.strip())
 
 
+def current_branch(data_dir: Path) -> str:
+    """Branch to sync with, matching the Codex transport. Falls back to 'main'."""
+    result = git("symbolic-ref", "--short", "HEAD", data_dir=data_dir)
+    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else "main"
+
+
 def commit_and_push(stage_dirs: list[str], data_dir: Path) -> None:
     """Stage changes, commit, rebase-pull, push.
 
@@ -61,12 +67,13 @@ def commit_and_push(stage_dirs: list[str], data_dir: Path) -> None:
 
     log.info("Committed: %s", msg)
 
-    pull_result = git("pull", "--rebase", "origin", "main", data_dir=data_dir)
+    branch = current_branch(data_dir)
+    pull_result = git("pull", "--rebase", "origin", branch, data_dir=data_dir)
     if pull_result.returncode != 0:
         log.warning("pull --rebase failed, attempting conflict resolution")
         resolve_conflicts(data_dir)
 
-    push_result = git("push", "origin", "main", data_dir=data_dir)
+    push_result = git("push", "origin", branch, data_dir=data_dir)
     if push_result.returncode != 0:
         log.warning("push failed (offline?): %s", push_result.stderr)
 
@@ -124,7 +131,7 @@ def resolve_conflicts(data_dir: Path) -> None:
 
 def pull_remote(data_dir: Path) -> None:
     """Pull remote changes (fast-forward or rebase)."""
-    result = git("pull", "--rebase", "origin", "main", data_dir=data_dir)
+    result = git("pull", "--rebase", "origin", current_branch(data_dir), data_dir=data_dir)
     if result.returncode == 0 and "Already up to date" not in result.stdout:
         log.info("Pulled remote changes")
     elif result.returncode != 0:

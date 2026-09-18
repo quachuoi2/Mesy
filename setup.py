@@ -17,11 +17,12 @@ import shutil
 import socket
 import subprocess
 import sys
+import argparse
 from configparser import ConfigParser
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import load_project_mappings, load_repos
+from src.config import load_project_mappings, load_repos, load_config, load_targets
 from src.pending import add_pending
 
 REPO_DIR = Path(__file__).resolve().parent
@@ -48,6 +49,14 @@ scan_interval_seconds = 60
 # repo_subdir = claude
 # mapping_conf = claude/projects.conf
 # sync_mode = symlink
+
+# Example Codex target (uncomment to enable):
+# [target:codex]
+# type = codex
+# repo_subdir = codex
+# sync_mode = symlink
+# export_memories = false
+# skills = my-personal-skill
 """
 
 
@@ -259,42 +268,7 @@ def ensure_sync_conf(data_dir: Path) -> bool:
 
 def load_sync_conf_targets(data_dir: Path) -> list[dict]:
     """Load target definitions from a repo's sync.conf."""
-    config_path = data_dir / "sync.conf"
-    if not config_path.exists():
-        return []
-
-    cfg = ConfigParser()
-    cfg.read(config_path)
-
-    targets = []
-    for section in cfg.sections():
-        if not section.startswith("target:"):
-            continue
-        name = section.split(":", 1)[1]
-        tdef: dict = {"name": name}
-        tdef["source"] = Path(cfg.get(section, "source")).expanduser()
-        tdef["repo_subdir"] = cfg.get(section, "repo_subdir")
-
-        if cfg.has_option(section, "mapping_conf"):
-            tdef["type"] = "claude-code"
-        else:
-            tdef["type"] = "generic"
-
-        if cfg.has_option(section, "file_patterns"):
-            tdef["file_patterns"] = [p.strip() for p in cfg.get(section, "file_patterns").split(",")]
-        else:
-            tdef["file_patterns"] = ["*.md"]
-
-        if cfg.has_option(section, "exclude"):
-            tdef["exclude"] = [e.strip() for e in cfg.get(section, "exclude").split(",")]
-        else:
-            tdef["exclude"] = []
-
-        tdef["sync_mode"] = cfg.get(section, "sync_mode", fallback="symlink").strip()
-
-        targets.append(tdef)
-
-    return targets
+    return load_targets(load_config(data_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -588,10 +562,21 @@ def setup_repo(data_dir: Path, seen_target_types: set[str]) -> None:
 
     for tdef in target_defs:
         ttype = tdef["type"]
-        if ttype in seen_target_types:
+        # Legacy Claude setup always claims the same ~/.claude directory.
+        # Generic and Codex instances are deduplicated by source ownership instead.
+        key = ttype if ttype == "claude-code" else f"{ttype}:{tdef['source'].absolute()}"
+        if key in seen_target_types:
             log("warn", f"[{tdef['name']}] target type '{ttype}' already handled by an earlier repo — skipping")
             continue
-        seen_target_types.add(ttype)
+        seen_target_types.add(key)
+
+        if ttype == "codex":
+            from src.main import build_targets
+            target = build_targets([tdef], data_dir)[0]
+            for line in target.preview():
+                log("codex", line)
+            target.setup()
+            continue
 
         if ttype == "claude-code":
             print(f"--- Claude Code ({data_dir.name}) ---")
@@ -716,6 +701,9 @@ def main() -> None:
     CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
 
     seen_target_types: set[str] = set()
+    # Validate every configured target before any repository is migrated.
+    from src.main import _build_repo_contexts
+    _build_repo_contexts(repos)
     for repo in repos:
         data_dir = repo["path"]
         print(f"\n=== Repo: {repo['name']} ({data_dir}) ===")
@@ -735,5 +723,34 @@ def main() -> None:
         print("Check status: systemctl --user status mesy")
 
 
+def configured_codex(action: str, data_dir: Path | None = None) -> None:
+    """Preview, adopt, or detach configured Codex targets without installing a daemon."""
+    from src.main import _build_repo_contexts
+    from src.targets.codex import CodexTarget
+    repos = ([{"name": data_dir.name, "path": data_dir.resolve()}]
+             if data_dir else load_repos())
+    contexts = _build_repo_contexts(repos)
+    targets = [t for ctx in contexts for t in ctx.targets if isinstance(t, CodexTarget)]
+    if not targets:
+        raise SystemExit("No Codex targets configured. Add [target:codex] with type = codex first.")
+    for target in targets:
+        for line in target.preview():
+            log("codex", line)
+        if action == "adopt":
+            target.setup()
+        elif action == "detach":
+            target.detach()
+            log("info", "Disable the Codex target before restarting Mesy to prevent relinking.")
+
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--codex", choices=["preview", "adopt", "detach"], help="Manage only configured Codex targets; no Git writes or service installation")
+    parser.add_argument("--data-dir", type=Path, help="Data repo used with --codex")
+    args = parser.parse_args()
+    if args.codex:
+        configured_codex(args.codex, args.data_dir)
+    elif args.data_dir:
+        parser.error("--data-dir requires --codex")
+    else:
+        main()

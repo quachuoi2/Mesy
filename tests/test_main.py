@@ -588,3 +588,92 @@ class TestMain:
         # Should call pull and push for both repos
         assert pull_mock.call_count == 2
         assert push_mock.call_count == 2
+
+
+class TestIntervalValidation:
+    """Intervals must be finite and positive; nan would stall the scan forever."""
+
+    @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "0", "-1", "abc", ""])
+    def test_invalid_interval_rejected(self, tmp_repo, value):
+        from src.main import _build_repo_contexts
+
+        (tmp_repo / "sync.conf").write_text(f"[mesy]\nscan_interval_seconds = {value}\n")
+        with pytest.raises(ValueError, match="scan_interval_seconds"):
+            _build_repo_contexts([{"name": "r", "path": tmp_repo}])
+
+    def test_valid_interval_accepted(self, tmp_repo):
+        from src.main import _build_repo_contexts
+
+        (tmp_repo / "sync.conf").write_text("[mesy]\nscan_interval_seconds = 45\n")
+        contexts = _build_repo_contexts([{"name": "r", "path": tmp_repo}])
+        assert contexts[0].settings["scan_interval_seconds"] == "45"
+
+
+class TestStartupExitStatus:
+    """Misconfiguration must exit non-zero so Restart=on-failure actually restarts."""
+
+    def test_missing_repos_conf_exits_non_zero(self, monkeypatch):
+        from src.main import main
+
+        monkeypatch.setattr("src.main.load_repos", lambda: [])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+
+    def test_bad_interval_exits_non_zero(self, tmp_repo, monkeypatch):
+        from src.main import main
+
+        (tmp_repo / "sync.conf").write_text("[mesy]\nscan_interval_seconds = nan\n")
+        monkeypatch.setattr("src.main.load_repos",
+                            lambda: [{"name": "r", "path": tmp_repo}])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+
+
+class TestScanFailureHandling:
+    def test_repeated_identical_failure_logs_once(self, caplog):
+        from src.config import RepoContext
+        from src.main import _scan_context, _scan_failures
+
+        _scan_failures.clear()
+        target = MagicMock()
+        target.name = "t"
+        target.scan.side_effect = ValueError("same conflict")
+        ctx = RepoContext(name="r", data_dir=Path("/tmp"), targets=[target],
+                          stage_dirs=[], settings={})
+
+        with caplog.at_level("ERROR"):
+            for _ in range(3):
+                assert _scan_context(ctx) is False
+        assert len(caplog.records) == 1
+
+    def test_recovery_is_reported(self, caplog):
+        from src.config import RepoContext
+        from src.main import _scan_context, _scan_failures
+
+        _scan_failures.clear()
+        target = MagicMock()
+        target.name = "t"
+        target.scan.side_effect = [ValueError("boom"), None]
+        ctx = RepoContext(name="r", data_dir=Path("/tmp"), targets=[target],
+                          stage_dirs=[], settings={})
+
+        with caplog.at_level("INFO"):
+            assert _scan_context(ctx) is False
+            assert _scan_context(ctx) is True
+        assert any("recovered" in r.message for r in caplog.records)
+
+    def test_healthy_target_still_scans_when_sibling_fails(self):
+        from src.config import RepoContext
+        from src.main import _scan_context, _scan_failures
+
+        _scan_failures.clear()
+        bad, good = MagicMock(), MagicMock()
+        bad.name, good.name = "bad", "good"
+        bad.scan.side_effect = ValueError("boom")
+        ctx = RepoContext(name="r", data_dir=Path("/tmp"), targets=[bad, good],
+                          stage_dirs=[], settings={})
+
+        assert _scan_context(ctx) is False
+        assert good.scan.call_count == 1

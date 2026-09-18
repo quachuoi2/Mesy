@@ -33,32 +33,28 @@ python sync.py
 
 ## Project Structure
 
+Canonical module map. Self-explanatory files (`config.py`, `base.py`, most tests) omitted — the names cover them.
+
 ```
-Mesy/
-├── sync.py                    # Entry point (delegates to src.main)
-├── setup.py                   # One-time onboarding (symlinks, daemon install)
-├── mesy.service               # systemd unit file
-├── src/
-│   ├── main.py                # Daemon loop (watchdog or polling), multi-repo
-│   ├── config.py              # repos.conf + per-repo sync.conf loading
-│   ├── git_utils.py           # Git operations, conflict resolution
-│   ├── sync_state.py          # Content hash tracking for three-way sync
-│   └── targets/
-│       ├── base.py            # SyncTarget ABC
-│       ├── claude_code.py     # Claude Code target (symlink mode)
-│       └── generic.py         # Generic target (symlink or copy mode)
-├── tests/
-│   ├── conftest.py            # Shared fixtures (tmp_repo, monkeypatching)
-│   ├── test_config.py
-│   ├── test_git_utils.py
-│   ├── test_main.py
-│   ├── test_sync_state.py
-│   └── test_targets/
-│       ├── conftest.py
-│       ├── test_base.py
-│       ├── test_claude_code.py
-│       └── test_generic.py
+src/
+├── main.py           # Daemon loop (watchdog or polling), multi-repo
+├── git_utils.py      # LEGACY transport — merges in the live worktree
+├── transport.py      # CODEX transport — merges in a detached worktree
+├── links.py          # Verified symlink adoption, backups, conflict capture
+├── sync_state.py     # Content hashes for copy-mode three-way sync
+├── pending.py        # Unmapped Claude Code projects
+└── targets/
+    ├── claude_code.py   # Maps per-device project names to canonical ones
+    ├── codex.py         # Symlink only, optional memory exports
+    ├── generic.py       # Any flat .md directory
+    └── _migration.py    # Initial file migration helpers
+
+tests/
+├── test_transport.py              # Transport decisions, git mocked
+└── test_transport_integration.py  # Transport against real local git repos
 ```
+
+Two transports coexist: a repo containing a Codex target uses `transport.py` for **all** its targets.
 
 ## Architecture
 
@@ -67,27 +63,17 @@ Mesy/
 - Each data repo is an independent git repo (e.g. AlfredMemory) containing its own `sync.conf`
 - `sync.conf` defines `[mesy]` timing settings and `[target:*]` sections; each target syncs files between a `source` (tool's directory) and `repo_dir` (subdir in the data repo)
 
-### Sync modes
+Sync modes, three-way copy rules, and the conflict-policy table live in [README.md](README.md) — do not restate them here. Codex specifics are in [docs/CODEX_SYNC.md](docs/CODEX_SYNC.md).
 
-| Mode | Mechanism | Use case |
-|------|-----------|----------|
-| `symlink` | Source files replaced with symlinks into repo | Claude Code (tool supports symlinks) |
-| `copy` | Bidirectional copy with three-way hash tracking | OpenClaw (can't use symlinks) |
+**Before touching conflict code:** there are two policies, not one. Copy-mode merges both versions into a single file; Codex adoption and Codex-repo git merges keep versions as separate copies and never write markers into live files. See the README table.
 
-### Three-way sync (copy mode)
+### Failure behavior
 
-Uses `src/sync_state.py` to store content hashes after each successful sync. On next scan, compares source and repo against the stored base hash:
-
-- Source changed, repo didn't → source wins
-- Repo changed, source didn't → repo wins
-- Both changed → real conflict (merge both, set `conflict: true`)
-- Neither changed → no action
-
-### Conflict resolution
-
-- Conflicted files get both versions wrapped in `<!-- CONFLICT -->` HTML comments
-- Frontmatter gets `conflict: true` flag
-- `merge_conflicting_file()` writes to BOTH local and repo files
+- A failed scan blocks commits for the ENTIRE repo, not just the failing target
+- Codex repos also stop pulling; legacy repos keep pulling (one-way sync until fixed)
+- Scan failures log once at ERROR until the message changes; recovery logs at INFO
+- Misconfiguration exits non-zero — never `return`, or `Restart=on-failure` leaves the daemon dead
+- Timing intervals must be finite and positive (`nan` would stall the scan forever)
 
 ## Coding Rules
 

@@ -348,3 +348,21 @@ class TestMergeConflictingFile:
         merge_conflicting_file(local=local, repo=repo)
 
         assert local.read_text() == repo.read_text()
+
+
+class TestCurrentBranch:
+    """Legacy transport must follow the checked-out branch, like the Codex transport."""
+
+    def test_derives_checked_out_branch(self, monkeypatch):
+        from src.git_utils import current_branch
+
+        monkeypatch.setattr("src.git_utils.git",
+                            lambda *a, **kw: subprocess.CompletedProcess(a, 0, "memory-sync\n", ""))
+        assert current_branch(Path("/tmp")) == "memory-sync"
+
+    def test_falls_back_to_main_on_detached_head(self, monkeypatch):
+        from src.git_utils import current_branch
+
+        monkeypatch.setattr("src.git_utils.git",
+                            lambda *a, **kw: subprocess.CompletedProcess(a, 128, "", "fatal"))
+        assert current_branch(Path("/tmp")) == "main"

@@ -6,3 +6,6 @@ __pycache__/
 todo/
 
 repos.conf
+.venv/
+.pytest_cache/
+.mesy-local/

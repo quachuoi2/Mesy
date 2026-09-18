@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from configparser import ConfigParser
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -116,15 +117,21 @@ def load_targets(cfg: ConfigParser) -> list[dict]:
             continue
         name = section.split(":", 1)[1]
         target_def = {"name": name}
-
-        target_def["source"] = Path(cfg.get(section, "source")).expanduser()
+        inferred_type = "claude-code" if cfg.has_option(section, "mapping_conf") else "generic"
+        target_def["type"] = cfg.get(section, "type", fallback=inferred_type).strip()
+        if target_def["type"] not in {"claude-code", "generic", "codex"}:
+            raise ValueError(f"[{section}] Unknown target type: {target_def['type']}")
+        if target_def["type"] == "codex":
+            source = cfg.get(section, "source", fallback=os.environ.get("CODEX_HOME", "~/.codex"))
+        else:
+            source = cfg.get(section, "source")
+        if not source.strip():
+            raise ValueError(f"[{section}] source cannot be empty")
+        target_def["source"] = Path(source).expanduser()
         target_def["repo_subdir"] = cfg.get(section, "repo_subdir")
 
         if cfg.has_option(section, "mapping_conf"):
-            target_def["type"] = "claude-code"
             target_def["mapping_conf"] = cfg.get(section, "mapping_conf")
-        else:
-            target_def["type"] = "generic"
 
         if cfg.has_option(section, "file_patterns"):
             target_def["file_patterns"] = [
@@ -144,6 +151,8 @@ def load_targets(cfg: ConfigParser) -> list[dict]:
             valid_sync_modes = {"symlink", "copy"}
             raw_sync_mode = cfg.get(section, "sync_mode").strip()
             if raw_sync_mode not in valid_sync_modes:
+                if target_def["type"] == "codex":
+                    raise ValueError(f"[{section}] Codex requires sync_mode = symlink")
                 log.warning(
                     "[target:%s] Invalid sync_mode=%r; must be one of %s — defaulting to 'symlink'",
                     name,
@@ -154,8 +163,14 @@ def load_targets(cfg: ConfigParser) -> list[dict]:
         else:
             raw_sync_mode = "symlink"
         target_def["sync_mode"] = raw_sync_mode
-
-
+        if target_def["type"] == "codex":
+            if raw_sync_mode != "symlink":
+                raise ValueError(f"[{section}] Codex requires sync_mode = symlink")
+            target_def["skills"] = [s.strip() for s in cfg.get(section, "skills", fallback="").split(",") if s.strip()]
+            target_def["skills_source"] = Path(cfg.get(section, "skills_source", fallback="~/.agents/skills")).expanduser()
+            target_def["export_memories"] = cfg.getboolean(section, "export_memories", fallback=False)
+            target_def["device_id"] = cfg.get(section, "device_id", fallback=None)
+            target_def["export_settle_seconds"] = cfg.getfloat(section, "export_settle_seconds", fallback=2)
         targets.append(target_def)
 
     return targets
