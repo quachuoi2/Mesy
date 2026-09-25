@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from src.config import RepoContext, load_targets
+from src.config import load_targets
+from src.factory import RepoContext, build_targets, validate_ownership
 from src.links import LinkConflict, inventory
-from src.main import build_targets, validate_ownership, _event_relevant, _snapshot
+from src.watch import _event_relevant, _snapshot
 from src.targets.codex import CodexTarget
 
 

@@ -5,28 +5,12 @@ from __future__ import annotations
 import logging
 import os
 from configparser import ConfigParser
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from src.targets.base import SyncTarget
 
 log = logging.getLogger("mesy")
 
 REPO_DIR = Path(__file__).resolve().parent.parent
 REPOS_CONF_PATH = REPO_DIR / "repos.conf"
-
-
-@dataclass
-class RepoContext:
-    """Bundles everything the daemon needs to manage one data repo."""
-
-    name: str
-    data_dir: Path
-    targets: list[SyncTarget] = field(default_factory=list)
-    stage_dirs: list[str] = field(default_factory=list)
-    settings: dict = field(default_factory=dict)
 
 
 def load_repos() -> list[dict]:
@@ -42,26 +26,25 @@ def load_repos() -> list[dict]:
     cfg = ConfigParser()
     cfg.read(REPOS_CONF_PATH)
 
-    repos = []
-    for section in cfg.sections():
-        if not section.startswith("repo:"):
-            continue
-        name = section.split(":", 1)[1].strip()
-        raw_path = cfg.get(section, "path", fallback="").strip()
-        if not raw_path:
-            log.warning("[repos.conf] Section [%s] has no 'path' key, skipping", section)
-            continue
-        path = Path(raw_path).expanduser().resolve()
-        if not path.is_dir():
-            log.warning(
-                "[repos.conf] Repo '%s' path=%s is not a valid directory, skipping",
-                name,
-                path,
-            )
-            continue
-        repos.append({"name": name, "path": path})
+    repos = [_parse_repo(cfg, section) for section in cfg.sections() if section.startswith("repo:")]
+    return [repo for repo in repos if repo is not None]
 
-    return repos
+
+def _parse_repo(cfg: ConfigParser, section: str) -> dict | None:
+    name = section.split(":", 1)[1].strip()
+    raw_path = cfg.get(section, "path", fallback="").strip()
+    if not raw_path:
+        log.warning("[repos.conf] Section [%s] has no 'path' key, skipping", section)
+        return None
+    path = Path(raw_path).expanduser().resolve()
+    if not path.is_dir():
+        log.warning(
+            "[repos.conf] Repo '%s' path=%s is not a valid directory, skipping",
+            name,
+            path,
+        )
+        return None
+    return {"name": name, "path": path}
 
 
 def load_config(data_dir: Path) -> ConfigParser:
@@ -111,66 +94,70 @@ def load_targets(cfg: ConfigParser) -> list[dict]:
     Returns a list of dicts with keys: name, type, source, repo_subdir,
     and optional: mapping_conf, file_patterns, exclude, sync_mode.
     """
-    targets = []
-    for section in cfg.sections():
-        if not section.startswith("target:"):
-            continue
-        name = section.split(":", 1)[1]
-        target_def = {"name": name}
-        inferred_type = "claude-code" if cfg.has_option(section, "mapping_conf") else "generic"
-        target_def["type"] = cfg.get(section, "type", fallback=inferred_type).strip()
-        if target_def["type"] not in {"claude-code", "generic", "codex"}:
-            raise ValueError(f"[{section}] Unknown target type: {target_def['type']}")
-        if target_def["type"] == "codex":
-            source = cfg.get(section, "source", fallback=os.environ.get("CODEX_HOME", "~/.codex"))
-        else:
-            source = cfg.get(section, "source")
-        if not source.strip():
-            raise ValueError(f"[{section}] source cannot be empty")
-        target_def["source"] = Path(source).expanduser()
-        target_def["repo_subdir"] = cfg.get(section, "repo_subdir")
+    return [_parse_target(cfg, section) for section in cfg.sections() if section.startswith("target:")]
 
-        if cfg.has_option(section, "mapping_conf"):
-            target_def["mapping_conf"] = cfg.get(section, "mapping_conf")
 
-        if cfg.has_option(section, "file_patterns"):
-            target_def["file_patterns"] = [
-                p.strip() for p in cfg.get(section, "file_patterns").split(",")
-            ]
-        else:
-            target_def["file_patterns"] = ["*.md"]
+def _parse_target(cfg: ConfigParser, section: str) -> dict:
+    name = section.split(":", 1)[1]
+    target_def = {"name": name}
+    target_def["type"] = _target_type(cfg, section)
+    target_def["source"] = _target_source(cfg, section, target_def["type"])
+    target_def["repo_subdir"] = cfg.get(section, "repo_subdir")
+    if cfg.has_option(section, "mapping_conf"):
+        target_def["mapping_conf"] = cfg.get(section, "mapping_conf")
+    target_def["file_patterns"] = _list_option(cfg, section, "file_patterns", ["*.md"])
+    target_def["exclude"] = _list_option(cfg, section, "exclude", [])
+    target_def["sync_mode"] = _sync_mode(cfg, section, name, target_def["type"])
+    if target_def["type"] == "codex":
+        target_def.update(_codex_options(cfg, section))
+    return target_def
 
-        if cfg.has_option(section, "exclude"):
-            target_def["exclude"] = [
-                e.strip() for e in cfg.get(section, "exclude").split(",")
-            ]
-        else:
-            target_def["exclude"] = []
 
-        if cfg.has_option(section, "sync_mode"):
-            valid_sync_modes = {"symlink", "copy"}
-            raw_sync_mode = cfg.get(section, "sync_mode").strip()
-            if raw_sync_mode not in valid_sync_modes:
-                if target_def["type"] == "codex":
-                    raise ValueError(f"[{section}] Codex requires sync_mode = symlink")
-                log.warning(
-                    "[target:%s] Invalid sync_mode=%r; must be one of %s — defaulting to 'symlink'",
-                    name,
-                    raw_sync_mode,
-                    sorted(valid_sync_modes),
-                )
-                raw_sync_mode = "symlink"
-        else:
-            raw_sync_mode = "symlink"
-        target_def["sync_mode"] = raw_sync_mode
-        if target_def["type"] == "codex":
-            if raw_sync_mode != "symlink":
-                raise ValueError(f"[{section}] Codex requires sync_mode = symlink")
-            target_def["skills"] = [s.strip() for s in cfg.get(section, "skills", fallback="").split(",") if s.strip()]
-            target_def["skills_source"] = Path(cfg.get(section, "skills_source", fallback="~/.agents/skills")).expanduser()
-            target_def["export_memories"] = cfg.getboolean(section, "export_memories", fallback=False)
-            target_def["device_id"] = cfg.get(section, "device_id", fallback=None)
-            target_def["export_settle_seconds"] = cfg.getfloat(section, "export_settle_seconds", fallback=2)
-        targets.append(target_def)
+def _target_type(cfg: ConfigParser, section: str) -> str:
+    inferred_type = "claude-code" if cfg.has_option(section, "mapping_conf") else "generic"
+    target_type = cfg.get(section, "type", fallback=inferred_type).strip()
+    if target_type not in {"claude-code", "generic", "codex"}:
+        raise ValueError(f"[{section}] Unknown target type: {target_type}")
+    return target_type
 
-    return targets
+
+def _target_source(cfg: ConfigParser, section: str, target_type: str) -> Path:
+    if target_type == "codex":
+        source = cfg.get(section, "source", fallback=os.environ.get("CODEX_HOME", "~/.codex"))
+    else:
+        source = cfg.get(section, "source")
+    if not source.strip():
+        raise ValueError(f"[{section}] source cannot be empty")
+    return Path(source).expanduser()
+
+
+def _list_option(cfg: ConfigParser, section: str, option: str, default: list[str]) -> list[str]:
+    if not cfg.has_option(section, option):
+        return default
+    return [item.strip() for item in cfg.get(section, option).split(",")]
+
+
+def _sync_mode(cfg: ConfigParser, section: str, name: str, target_type: str) -> str:
+    sync_mode = cfg.get(section, "sync_mode", fallback="symlink").strip()
+    if target_type == "codex" and sync_mode != "symlink":
+        raise ValueError(f"[{section}] Codex requires sync_mode = symlink")
+    valid_sync_modes = {"symlink", "copy"}
+    if sync_mode not in valid_sync_modes:
+        log.warning(
+            "[target:%s] Invalid sync_mode=%r; must be one of %s — defaulting to 'symlink'",
+            name,
+            sync_mode,
+            sorted(valid_sync_modes),
+        )
+        sync_mode = "symlink"
+    return sync_mode
+
+
+def _codex_options(cfg: ConfigParser, section: str) -> dict:
+    return {
+        "skills": [s.strip() for s in cfg.get(section, "skills", fallback="").split(",") if s.strip()],
+        "skills_source": Path(cfg.get(section, "skills_source", fallback="~/.agents/skills")).expanduser(),
+        "export_memories": cfg.getboolean(section, "export_memories", fallback=False),
+        "device_id": cfg.get(section, "device_id", fallback=None),
+        "export_settle_seconds": cfg.getfloat(section, "export_settle_seconds", fallback=2),
+    }

@@ -8,7 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.main import build_targets, get_all_stage_dirs, get_md_mtimes
+from src.factory import build_targets, get_all_stage_dirs
+from src.watch import get_md_mtimes
 from src.targets.claude_code import ClaudeCodeTarget
 from src.targets.generic import GenericTarget
 
@@ -158,8 +159,8 @@ class TestGetMdMtimes:
 
 class TestBuildRepoContexts:
     def test_builds_single_repo_context(self, tmp_multi_repo, monkeypatch):
-        """_build_repo_contexts() creates a RepoContext for each repo in the list."""
-        from src.main import _build_repo_contexts
+        """build_repo_contexts() creates a RepoContext for each repo in the list."""
+        from src.factory import build_repo_contexts
 
         # Setup sync.conf for repo_a
         conf_text = (
@@ -171,7 +172,7 @@ class TestBuildRepoContexts:
         (tmp_multi_repo["repo_a"] / "sync.conf").write_text(conf_text)
 
         repo_list = [{"name": "repo-a", "path": tmp_multi_repo["repo_a"]}]
-        contexts = _build_repo_contexts(repo_list)
+        contexts = build_repo_contexts(repo_list)
 
         assert len(contexts) == 1
         assert contexts[0].name == "repo-a"
@@ -180,8 +181,8 @@ class TestBuildRepoContexts:
         assert len(contexts[0].stage_dirs) > 0
 
     def test_builds_multiple_repo_contexts(self, tmp_multi_repo, monkeypatch):
-        """_build_repo_contexts() handles multiple repos with independent configs."""
-        from src.main import _build_repo_contexts
+        """build_repo_contexts() handles multiple repos with independent configs."""
+        from src.factory import build_repo_contexts
 
         # Setup sync.conf for both repos with different targets
         for repo_name, repo_path in [
@@ -199,7 +200,7 @@ class TestBuildRepoContexts:
             {"name": "repo-a", "path": tmp_multi_repo["repo_a"]},
             {"name": "repo-b", "path": tmp_multi_repo["repo_b"]},
         ]
-        contexts = _build_repo_contexts(repo_list)
+        contexts = build_repo_contexts(repo_list)
 
         assert len(contexts) == 2
         assert contexts[0].name == "repo-a"
@@ -208,8 +209,8 @@ class TestBuildRepoContexts:
         assert contexts[1].data_dir == tmp_multi_repo["repo_b"]
 
     def test_preserves_target_order(self, tmp_multi_repo):
-        """_build_repo_contexts() preserves the order of repos."""
-        from src.main import _build_repo_contexts
+        """build_repo_contexts() preserves the order of repos."""
+        from src.factory import build_repo_contexts
 
         # Setup sync.conf for repo_a
         conf_text = (
@@ -220,13 +221,13 @@ class TestBuildRepoContexts:
         (tmp_multi_repo["repo_a"] / "sync.conf").write_text(conf_text)
 
         repo_list = [{"name": "repo-a", "path": tmp_multi_repo["repo_a"]}]
-        contexts = _build_repo_contexts(repo_list)
+        contexts = build_repo_contexts(repo_list)
 
         assert contexts[0].name == "repo-a"
 
     def test_settings_populated_per_repo_from_sync_conf(self, tmp_multi_repo):
-        """_build_repo_contexts() populates ctx.settings independently per repo."""
-        from src.main import _build_repo_contexts
+        """build_repo_contexts() populates ctx.settings independently per repo."""
+        from src.factory import build_repo_contexts
 
         (tmp_multi_repo["repo_a"] / "sync.conf").write_text(
             "[mesy]\ndebounce_seconds = 10\npull_interval_seconds = 120\n"
@@ -241,7 +242,7 @@ class TestBuildRepoContexts:
             "repo_subdir = openclaw/main\n"
         )
 
-        contexts = _build_repo_contexts([
+        contexts = build_repo_contexts([
             {"name": "repo-a", "path": tmp_multi_repo["repo_a"]},
             {"name": "repo-b", "path": tmp_multi_repo["repo_b"]},
         ])
@@ -252,8 +253,8 @@ class TestBuildRepoContexts:
         assert contexts[1].settings["pull_interval_seconds"] == "300"
 
     def test_settings_defaults_when_no_sync_conf(self, tmp_multi_repo):
-        """_build_repo_contexts() uses config defaults when sync.conf has no [mesy] section."""
-        from src.main import _build_repo_contexts
+        """build_repo_contexts() uses config defaults when sync.conf has no [mesy] section."""
+        from src.factory import build_repo_contexts
 
         # Write a sync.conf with only a target (no [mesy] override)
         (tmp_multi_repo["repo_a"] / "sync.conf").write_text(
@@ -262,7 +263,7 @@ class TestBuildRepoContexts:
             "repo_subdir = openclaw/main\n"
         )
 
-        contexts = _build_repo_contexts([{"name": "repo-a", "path": tmp_multi_repo["repo_a"]}])
+        contexts = build_repo_contexts([{"name": "repo-a", "path": tmp_multi_repo["repo_a"]}])
 
         assert contexts[0].settings["debounce_seconds"] == "30"
         assert contexts[0].settings["pull_interval_seconds"] == "60"
@@ -272,8 +273,8 @@ class TestRunWithWatchdog:
     def test_initializes_observer_for_each_repo(self, tmp_multi_repo, monkeypatch):
         """run_with_watchdog() schedules observers for all data repos."""
         pytest.importorskip("watchdog")
-        from src.main import run_with_watchdog
-        from src.config import RepoContext
+        from src.watch import run_with_watchdog
+        from src.factory import RepoContext
         from unittest.mock import patch, MagicMock
 
         # Mock watchdog Observer class
@@ -288,31 +289,33 @@ class TestRunWithWatchdog:
             if call_count[0] > 1:
                 raise KeyboardInterrupt()
 
-        monkeypatch.setattr("src.main.time.sleep", fake_sleep)
+        monkeypatch.setattr("src.watch.time.sleep", fake_sleep)
 
         # Patch watchdog.observers.Observer within run_with_watchdog
-        with patch("src.main.Observer", mock_observer_class):
-            # Create minimal contexts
-            ctx_a = RepoContext(
-                name="repo-a",
-                data_dir=tmp_multi_repo["repo_a"],
-                targets=[],
-                stage_dirs=[],
-            )
-            ctx_b = RepoContext(
-                name="repo-b",
-                data_dir=tmp_multi_repo["repo_b"],
-                targets=[],
-                stage_dirs=[],
-            )
-
+        with patch("src.watch.Observer", mock_observer_class):
             settings = {
                 "debounce_seconds": "30",
                 "pull_interval_seconds": "60",
                 "scan_interval_seconds": "60",
             }
 
-            run_with_watchdog([ctx_a, ctx_b], settings)
+            # Create minimal contexts
+            ctx_a = RepoContext(
+                name="repo-a",
+                data_dir=tmp_multi_repo["repo_a"],
+                targets=[],
+                stage_dirs=[],
+                settings=settings,
+            )
+            ctx_b = RepoContext(
+                name="repo-b",
+                data_dir=tmp_multi_repo["repo_b"],
+                targets=[],
+                stage_dirs=[],
+                settings=settings,
+            )
+
+            run_with_watchdog([ctx_a, ctx_b])
 
             # Verify observer was scheduled for both repos
             assert mock_observer.schedule.call_count == 2
@@ -322,8 +325,8 @@ class TestRunWithWatchdog:
     def test_handles_keyboard_interrupt(self, tmp_multi_repo, monkeypatch):
         """run_with_watchdog() stops observer and exits cleanly on KeyboardInterrupt."""
         pytest.importorskip("watchdog")
-        from src.main import run_with_watchdog
-        from src.config import RepoContext
+        from src.watch import run_with_watchdog
+        from src.factory import RepoContext
         from unittest.mock import patch, MagicMock
 
         mock_observer = MagicMock()
@@ -332,14 +335,7 @@ class TestRunWithWatchdog:
         def fake_sleep(duration):
             raise KeyboardInterrupt()
 
-        monkeypatch.setattr("src.main.time.sleep", fake_sleep)
-
-        ctx = RepoContext(
-            name="repo-a",
-            data_dir=tmp_multi_repo["repo_a"],
-            targets=[],
-            stage_dirs=[],
-        )
+        monkeypatch.setattr("src.watch.time.sleep", fake_sleep)
 
         settings = {
             "debounce_seconds": "30",
@@ -347,9 +343,17 @@ class TestRunWithWatchdog:
             "scan_interval_seconds": "60",
         }
 
+        ctx = RepoContext(
+            name="repo-a",
+            data_dir=tmp_multi_repo["repo_a"],
+            targets=[],
+            stage_dirs=[],
+            settings=settings,
+        )
+
         # Should not raise, should stop observer
-        with patch("src.main.Observer", mock_observer_class):
-            run_with_watchdog([ctx], settings)
+        with patch("src.watch.Observer", mock_observer_class):
+            run_with_watchdog([ctx])
 
         mock_observer.stop.assert_called_once()
         mock_observer.join.assert_called_once()
@@ -358,20 +362,27 @@ class TestRunWithWatchdog:
 class TestRunWithPolling:
     def test_polls_on_mtime_changes(self, tmp_multi_repo, monkeypatch):
         """run_with_polling() detects .md file changes and calls commit_and_push."""
-        from src.main import run_with_polling
-        from src.config import RepoContext
+        from src.watch import run_with_polling
+        from src.factory import RepoContext
+
+        settings = {
+            "debounce_seconds": "1",
+            "pull_interval_seconds": "60",
+            "scan_interval_seconds": "60",
+        }
 
         ctx = RepoContext(
             name="repo-a",
             data_dir=tmp_multi_repo["repo_a"],
             targets=[],
             stage_dirs=["openclaw/main/"],
+            settings=settings,
         )
 
         commit_mock = MagicMock()
         pull_mock = MagicMock()
-        monkeypatch.setattr("src.main.commit_and_push", commit_mock)
-        monkeypatch.setattr("src.main.pull_remote", pull_mock)
+        monkeypatch.setattr("src.git_sync.legacy.commit_and_push", commit_mock)
+        monkeypatch.setattr("src.git_sync.legacy.pull_remote", pull_mock)
 
         # Mock get_md_mtimes to simulate a change on the second call
         call_count = [0]
@@ -388,7 +399,7 @@ class TestRunWithPolling:
             else:
                 return modified_mtimes
 
-        monkeypatch.setattr("src.main.get_md_mtimes", fake_get_md_mtimes)
+        monkeypatch.setattr("src.watch.get_md_mtimes", fake_get_md_mtimes)
 
         sleep_count = [0]
 
@@ -398,35 +409,17 @@ class TestRunWithPolling:
                 # Exit after two sleep calls (initialization + first check + exit)
                 raise KeyboardInterrupt()
 
-        monkeypatch.setattr("src.main.time.sleep", fake_sleep)
+        monkeypatch.setattr("src.watch.time.sleep", fake_sleep)
 
-        settings = {
-            "debounce_seconds": "1",
-            "pull_interval_seconds": "60",
-            "scan_interval_seconds": "60",
-        }
-
-        run_with_polling([ctx], settings)
+        run_with_polling([ctx])
 
         # commit_and_push should be called when mtime changes
         commit_mock.assert_called()
 
     def test_handles_keyboard_interrupt_cleanly(self, tmp_multi_repo, monkeypatch):
         """run_with_polling() exits gracefully on KeyboardInterrupt."""
-        from src.main import run_with_polling
-        from src.config import RepoContext
-
-        ctx = RepoContext(
-            name="repo-a",
-            data_dir=tmp_multi_repo["repo_a"],
-            targets=[],
-            stage_dirs=[],
-        )
-
-        def fake_sleep(duration):
-            raise KeyboardInterrupt()
-
-        monkeypatch.setattr("src.main.time.sleep", fake_sleep)
+        from src.watch import run_with_polling
+        from src.factory import RepoContext
 
         settings = {
             "debounce_seconds": "1",
@@ -434,13 +427,26 @@ class TestRunWithPolling:
             "scan_interval_seconds": "60",
         }
 
+        ctx = RepoContext(
+            name="repo-a",
+            data_dir=tmp_multi_repo["repo_a"],
+            targets=[],
+            stage_dirs=[],
+            settings=settings,
+        )
+
+        def fake_sleep(duration):
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr("src.watch.time.sleep", fake_sleep)
+
         # Should not raise
-        run_with_polling([ctx], settings)
+        run_with_polling([ctx])
 
     def test_per_repo_pull_interval_respected(self, tmp_multi_repo, monkeypatch):
         """run_with_polling() uses each ctx's own pull_interval_seconds, not the global."""
-        from src.main import run_with_polling
-        from src.config import RepoContext
+        from src.watch import run_with_polling
+        from src.factory import RepoContext
 
         # repo_a has a very short pull interval; repo_b has a very long one.
         ctx_a = RepoContext(
@@ -448,20 +454,20 @@ class TestRunWithPolling:
             data_dir=tmp_multi_repo["repo_a"],
             targets=[],
             stage_dirs=[],
-            settings={"debounce_seconds": "1", "pull_interval_seconds": "1"},
+            settings={"debounce_seconds": "1", "pull_interval_seconds": "1", "scan_interval_seconds": "9999"},
         )
         ctx_b = RepoContext(
             name="repo-b",
             data_dir=tmp_multi_repo["repo_b"],
             targets=[],
             stage_dirs=[],
-            settings={"debounce_seconds": "1", "pull_interval_seconds": "9999"},
+            settings={"debounce_seconds": "1", "pull_interval_seconds": "9999", "scan_interval_seconds": "9999"},
         )
 
         pull_mock = MagicMock()
-        monkeypatch.setattr("src.main.pull_remote", pull_mock)
-        monkeypatch.setattr("src.main.commit_and_push", MagicMock())
-        monkeypatch.setattr("src.main.get_md_mtimes", lambda data_dir=None: {})
+        monkeypatch.setattr("src.git_sync.legacy.pull_remote", pull_mock)
+        monkeypatch.setattr("src.git_sync.legacy.commit_and_push", MagicMock())
+        monkeypatch.setattr("src.watch.get_md_mtimes", lambda data_dir=None: {})
 
         # Advance time between init and loop tick so pull checks fire.
         call_count = [0]
@@ -481,16 +487,10 @@ class TestRunWithPolling:
             if sleep_count[0] >= 2:
                 raise KeyboardInterrupt()
 
-        monkeypatch.setattr("src.main.time.sleep", fake_sleep)
-        monkeypatch.setattr("src.main.time.time", fake_time)
+        monkeypatch.setattr("src.watch.time.sleep", fake_sleep)
+        monkeypatch.setattr("src.watch.time.time", fake_time)
 
-        global_settings = {
-            "debounce_seconds": "9999",
-            "pull_interval_seconds": "9999",
-            "scan_interval_seconds": "9999",
-        }
-
-        run_with_polling([ctx_a, ctx_b], global_settings)
+        run_with_polling([ctx_a, ctx_b])
 
         # pull_remote should only be called for repo-a (short interval) not repo-b (long interval).
         called_dirs = [call.kwargs.get("data_dir") or call.args[0] if call.args else call.kwargs.get("data_dir") for call in pull_mock.call_args_list]
@@ -518,13 +518,13 @@ class TestMain:
         push_mock = MagicMock()
         scan_mock = MagicMock()
 
-        monkeypatch.setattr("src.main.pull_remote", pull_mock)
-        monkeypatch.setattr("src.main.commit_and_push", push_mock)
+        monkeypatch.setattr("src.git_sync.legacy.pull_remote", pull_mock)
+        monkeypatch.setattr("src.git_sync.legacy.commit_and_push", push_mock)
 
         # Prevent the daemon loop from starting after initial sync
-        import src.main as main_mod
+        import src.factory as factory_mod
 
-        original_build = main_mod.build_targets
+        original_build = factory_mod.build_targets
 
         def patched_build(target_defs, data_dir):
             targets = original_build(target_defs, data_dir=data_dir)
@@ -532,7 +532,7 @@ class TestMain:
                 t.scan = scan_mock
             return targets
 
-        monkeypatch.setattr("src.main.build_targets", patched_build)
+        monkeypatch.setattr("src.factory.build_targets", patched_build)
 
         # Prevent the watchdog/polling loop from running
         monkeypatch.setattr("src.main.run_with_watchdog", lambda *a, **kw: None)
@@ -571,8 +571,8 @@ class TestMain:
         # Mock git operations
         pull_mock = MagicMock()
         push_mock = MagicMock()
-        monkeypatch.setattr("src.main.pull_remote", pull_mock)
-        monkeypatch.setattr("src.main.commit_and_push", push_mock)
+        monkeypatch.setattr("src.git_sync.legacy.pull_remote", pull_mock)
+        monkeypatch.setattr("src.git_sync.legacy.commit_and_push", push_mock)
 
         # Patch load_repos to return our test repos
         monkeypatch.setattr(
@@ -595,17 +595,17 @@ class TestIntervalValidation:
 
     @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "0", "-1", "abc", ""])
     def test_invalid_interval_rejected(self, tmp_repo, value):
-        from src.main import _build_repo_contexts
+        from src.factory import build_repo_contexts
 
         (tmp_repo / "sync.conf").write_text(f"[mesy]\nscan_interval_seconds = {value}\n")
         with pytest.raises(ValueError, match="scan_interval_seconds"):
-            _build_repo_contexts([{"name": "r", "path": tmp_repo}])
+            build_repo_contexts([{"name": "r", "path": tmp_repo}])
 
     def test_valid_interval_accepted(self, tmp_repo):
-        from src.main import _build_repo_contexts
+        from src.factory import build_repo_contexts
 
         (tmp_repo / "sync.conf").write_text("[mesy]\nscan_interval_seconds = 45\n")
-        contexts = _build_repo_contexts([{"name": "r", "path": tmp_repo}])
+        contexts = build_repo_contexts([{"name": "r", "path": tmp_repo}])
         assert contexts[0].settings["scan_interval_seconds"] == "45"
 
 
@@ -633,8 +633,8 @@ class TestStartupExitStatus:
 
 class TestScanFailureHandling:
     def test_repeated_identical_failure_logs_once(self, caplog):
-        from src.config import RepoContext
-        from src.main import _scan_context, _scan_failures
+        from src.factory import RepoContext
+        from src.cycle import _scan_failures, scan_repo
 
         _scan_failures.clear()
         target = MagicMock()
@@ -645,12 +645,12 @@ class TestScanFailureHandling:
 
         with caplog.at_level("ERROR"):
             for _ in range(3):
-                assert _scan_context(ctx) is False
+                assert scan_repo(ctx) is False
         assert len(caplog.records) == 1
 
     def test_recovery_is_reported(self, caplog):
-        from src.config import RepoContext
-        from src.main import _scan_context, _scan_failures
+        from src.factory import RepoContext
+        from src.cycle import _scan_failures, scan_repo
 
         _scan_failures.clear()
         target = MagicMock()
@@ -660,13 +660,13 @@ class TestScanFailureHandling:
                           stage_dirs=[], settings={})
 
         with caplog.at_level("INFO"):
-            assert _scan_context(ctx) is False
-            assert _scan_context(ctx) is True
+            assert scan_repo(ctx) is False
+            assert scan_repo(ctx) is True
         assert any("recovered" in r.message for r in caplog.records)
 
     def test_healthy_target_still_scans_when_sibling_fails(self):
-        from src.config import RepoContext
-        from src.main import _scan_context, _scan_failures
+        from src.factory import RepoContext
+        from src.cycle import _scan_failures, scan_repo
 
         _scan_failures.clear()
         bad, good = MagicMock(), MagicMock()
@@ -675,5 +675,5 @@ class TestScanFailureHandling:
         ctx = RepoContext(name="r", data_dir=Path("/tmp"), targets=[bad, good],
                           stage_dirs=[], settings={})
 
-        assert _scan_context(ctx) is False
+        assert scan_repo(ctx) is False
         assert good.scan.call_count == 1

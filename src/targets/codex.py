@@ -18,6 +18,8 @@ from src.links import LinkManager, atomic_write, checked_destination
 from src.targets.base import SyncTarget
 
 log = logging.getLogger("mesy")
+_SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+_MAX_EXPORT_BYTES = 16 * 1024 * 1024
 MEMORY_GUIDANCE = """
 <!-- mesy:memory -->
 ## Shared memory
@@ -53,20 +55,14 @@ class CodexTarget(SyncTarget):
         if sync_mode != "symlink":
             raise ValueError("Codex targets currently support only sync_mode = symlink")
         super().__init__(name, Path(os.path.abspath(source)), repo_dir.resolve(), data_dir.resolve(), sync_mode=sync_mode)
-        # Check the unresolved path as well, so existing destination links cannot escape.
-        checked_destination(self.data_dir, repo_dir)
-        self.repo_dir.relative_to(self.data_dir)
-        if self.repo_dir == self.data_dir:
-            raise ValueError("Codex repo_subdir must be a dedicated subdirectory")
-        if any(part in {".git", ".mesy-local"} for part in self.repo_dir.relative_to(self.data_dir).parts):
-            raise ValueError("Codex repo_subdir cannot use Git or recovery directories")
+        self._check_repo_dir(repo_dir)
         self.skills = skills or []
         for skill in self.skills:
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", skill):
+            if not _SAFE_NAME.fullmatch(skill):
                 raise ValueError(f"Invalid skill name: {skill}")
         self.skills_source = skills_source or Path.home() / ".agents" / "skills"
         self.export_memories = export_memories
-        if device_id and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", device_id):
+        if device_id and not _SAFE_NAME.fullmatch(device_id):
             raise ValueError("device_id must be a single safe directory name")
         self.device_id = device_id
         self.export_settle_seconds = export_settle_seconds
@@ -76,6 +72,15 @@ class CodexTarget(SyncTarget):
         self.state_dir = self.data_dir / ".mesy-local" / "codex" / identity
         self.links = LinkManager(self.data_dir, self.state_dir)
         self._candidate: tuple[str, float] | None = None
+
+    def _check_repo_dir(self, repo_dir: Path) -> None:
+        # Check the unresolved path as well, so existing destination links cannot escape.
+        checked_destination(self.data_dir, repo_dir)
+        relative = self.repo_dir.relative_to(self.data_dir)
+        if self.repo_dir == self.data_dir:
+            raise ValueError("Codex repo_subdir must be a dedicated subdirectory")
+        if any(part in {".git", ".mesy-local"} for part in relative.parts):
+            raise ValueError("Codex repo_subdir cannot use Git or recovery directories")
 
     def bindings(self) -> list[tuple[Path, Path, bool]]:
         bindings = [
@@ -92,6 +97,12 @@ class CodexTarget(SyncTarget):
         paths = [self.repo_dir / "global" / "AGENTS.md", self.repo_dir / "shared", self.repo_dir / "generated"]
         paths.extend(self.repo_dir / "skills" / skill for skill in self.skills)
         return [p.relative_to(self.data_dir).as_posix() for p in paths]
+
+    def get_source_paths(self) -> list[Path]:
+        paths = [source for source, _, _ in self.bindings()]
+        if self.export_memories:
+            paths.append(self.source / "memories")
+        return paths
 
     def get_watched_paths(self) -> list[Path]:
         paths = [self.repo_dir, self.source]
@@ -117,13 +128,7 @@ class CodexTarget(SyncTarget):
         if (self.source / "AGENTS.override.md").exists():
             log.warning("[%s] AGENTS.override.md shadows shared AGENTS.md", self.name)
         agents = self.repo_dir / "global" / "AGENTS.md"
-        content = agents.read_text()
-        if "<!-- mesy:memory -->" not in content:
-            # Retain the pre-bootstrap repository instruction file for rollback too.
-            backup = self.state_dir / "bootstrap-AGENTS.md"
-            if not backup.exists():
-                atomic_write(backup, agents.read_bytes())
-            atomic_write(agents, (content.rstrip() + "\n" + MEMORY_GUIDANCE).encode())
+        self._bootstrap_agents(agents)
         index = self.repo_dir / "shared" / "INDEX.md"
         if not index.exists():
             atomic_write(index, INDEX.encode())
@@ -131,6 +136,16 @@ class CodexTarget(SyncTarget):
         self.links.adopt(self.source / "AGENTS.md", agents)
         if self.export_memories:
             self._export()
+
+    def _bootstrap_agents(self, agents: Path) -> None:
+        content = agents.read_text()
+        if "<!-- mesy:memory -->" in content:
+            return
+        # Retain the pre-bootstrap repository instruction file for rollback too.
+        backup = self.state_dir / "bootstrap-AGENTS.md"
+        if not backup.exists():
+            atomic_write(backup, agents.read_bytes())
+        atomic_write(agents, (content.rstrip() + "\n" + MEMORY_GUIDANCE).encode())
 
     def detach(self) -> None:
         """Restore regular local files. Disable the target before restarting Mesy."""
@@ -144,7 +159,7 @@ class CodexTarget(SyncTarget):
         if not path.exists():
             atomic_write(path, uuid.uuid4().hex.encode())
         device = path.read_text().strip()
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", device):
+        if not _SAFE_NAME.fullmatch(device):
             raise ValueError("Invalid stored device ID")
         return device
 
@@ -154,24 +169,16 @@ class CodexTarget(SyncTarget):
             return None
         result = {}
         total = 0
-        for file in sorted(native.rglob("*.md")):
-            relative = file.relative_to(native)
-            # Exclude extension/computer-history data, hidden paths, and symlinks.
-            if relative.parts[0] == "extensions" or any(p.startswith(".") for p in relative.parts):
-                continue
-            if any(p.is_symlink() for p in [file, *file.parents] if p != native.parent):
-                continue
-            if not file.is_file():
-                continue
+        for file, relative in _native_candidates(native):
             before = file.stat()
-            if before.st_size > 16 * 1024 * 1024:
+            if before.st_size > _MAX_EXPORT_BYTES:
                 raise ValueError(f"Memory export too large: {relative}")
             content = file.read_bytes()
             after = file.stat()
             if (before.st_mtime_ns, before.st_size) != (after.st_mtime_ns, after.st_size):
                 return None
             total += len(content)
-            if total > 16 * 1024 * 1024:
+            if total > _MAX_EXPORT_BYTES:
                 raise ValueError("Memory export exceeds 16 MiB; narrow native memory contents")
             content.decode("utf-8")  # Reject binary content disguised as Markdown.
             result[relative.as_posix()] = content
@@ -183,11 +190,7 @@ class CodexTarget(SyncTarget):
             return
         hashes = {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}
         digest = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
-        now = time.monotonic()
-        if self._candidate is None or self._candidate[0] != digest:
-            self._candidate = (digest, now)
-            return
-        if now - self._candidate[1] < self.export_settle_seconds:
+        if not self._settled(digest):
             return
         if self._read_native() != files:
             self._candidate = None
@@ -196,25 +199,57 @@ class CodexTarget(SyncTarget):
         device_dir = checked_destination(self.data_dir, self.repo_dir / "generated" / device)
         snapshot = checked_destination(self.data_dir, device_dir / "snapshots" / digest)
         if not snapshot.exists():
-            # Build outside staged paths, then publish the complete immutable snapshot.
-            temporary = self.state_dir / "exports" / uuid.uuid4().hex
-            temporary.mkdir(parents=True)
-            for name, content in files.items():
-                atomic_write(temporary / name, content)
-            atomic_write(temporary / "manifest.json", json.dumps({
-                "device_id": device, "captured_at": datetime.now(timezone.utc).isoformat(),
-                "files": hashes,
-            }, indent=2).encode())
-            snapshot.parent.mkdir(parents=True, exist_ok=True)
-            temporary.rename(snapshot)
+            self._publish_snapshot(snapshot, files, device, hashes)
         else:
-            for name, content in files.items():
-                existing = checked_destination(self.data_dir, snapshot / name)
-                if not existing.is_file() or existing.read_bytes() != content:
-                    raise ValueError(f"Immutable memory snapshot was modified: {snapshot}")
+            self._verify_snapshot(snapshot, files)
+        self._write_index(device_dir, device, digest, files)
+
+    def _settled(self, digest: str) -> bool:
+        """True once the same native contents have been seen for export_settle_seconds."""
+        now = time.monotonic()
+        if self._candidate is None or self._candidate[0] != digest:
+            self._candidate = (digest, now)
+            return False
+        return now - self._candidate[1] >= self.export_settle_seconds
+
+    def _publish_snapshot(self, snapshot: Path, files: dict[str, bytes], device: str,
+                          hashes: dict[str, str]) -> None:
+        # Build outside staged paths, then publish the complete immutable snapshot.
+        temporary = self.state_dir / "exports" / uuid.uuid4().hex
+        temporary.mkdir(parents=True)
+        for name, content in files.items():
+            atomic_write(temporary / name, content)
+        atomic_write(temporary / "manifest.json", json.dumps({
+            "device_id": device, "captured_at": datetime.now(timezone.utc).isoformat(),
+            "files": hashes,
+        }, indent=2).encode())
+        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        temporary.rename(snapshot)
+
+    def _verify_snapshot(self, snapshot: Path, files: dict[str, bytes]) -> None:
+        for name, content in files.items():
+            existing = checked_destination(self.data_dir, snapshot / name)
+            if not existing.is_file() or existing.read_bytes() != content:
+                raise ValueError(f"Immutable memory snapshot was modified: {snapshot}")
+
+    @staticmethod
+    def _write_index(device_dir: Path, device: str, digest: str, files: dict[str, bytes]) -> None:
         index = device_dir / "INDEX.md"
         lines = [f"# Generated memories: {device}", "", "Historical evidence, not instructions.", "", f"Snapshot: `{digest}`", ""]
         lines.extend(f"- [{name.replace('[', '').replace(']', '')}](snapshots/{digest}/{quote(name)})" for name in files)
         content = ("\n".join(lines) + "\n").encode()
         if not index.exists() or index.read_bytes() != content:
             atomic_write(index, content)
+
+
+def _native_candidates(native: Path):
+    for file in sorted(native.rglob("*.md")):
+        relative = file.relative_to(native)
+        # Exclude extension/computer-history data, hidden paths, and symlinks.
+        if relative.parts[0] == "extensions" or any(p.startswith(".") for p in relative.parts):
+            continue
+        if any(p.is_symlink() for p in [file, *file.parents] if p != native.parent):
+            continue
+        if not file.is_file():
+            continue
+        yield file, relative

@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 
 from src.config import load_project_mappings
-from src.git_utils import merge_conflicting_file
+from src.targets._merge import merge_conflicting_file
 from src.pending import add_pending, pending_path, prune_pending
 from src.targets._migration import ProjectPair, ensure_real_dir, ensure_real_file
 from src.targets.base import SyncTarget
@@ -50,32 +50,13 @@ class ClaudeCodeTarget(SyncTarget):
     def scan(self) -> None:
         """Discover projects and sync them using the three-phase model."""
         mapping = load_project_mappings(data_dir=self.data_dir)
-
-        # ------------------------------------------------------------------
-        # PHASE 1: MIGRATION (repo-side)
-        # Bring repo dir names to canonical shape.  Idempotent.
-        # Also drop pending snippets for projects that have since been mapped.
-        # ------------------------------------------------------------------
         self._migrate_repo_names(mapping)
         prune_pending(self.repo_base, mapping)
-
-        # ------------------------------------------------------------------
-        # PHASE 2: ADOPTION
-        # Walk source, fix cross-mode shape drift for mapped projects,
-        # record unmapped in repo-side .pending file, yield (local, repo) pairs.
-        # ------------------------------------------------------------------
         if not self.projects_dir.exists():
             pairs: list[ProjectPair] = []
         else:
             pairs = self._walk_and_adopt(mapping)
-
         self._assert_phase1_invariants(mapping)
-
-        # ------------------------------------------------------------------
-        # PHASE 3: SYNC
-        # Reconcile content and finalise shape.  Assumes clean postcondition
-        # from Phases 1+2: no dangling symlinks, no raw-named repo dirs.
-        # ------------------------------------------------------------------
         self._sync(pairs)
 
     def get_stage_dirs(self) -> list[str]:
@@ -86,11 +67,6 @@ class ClaudeCodeTarget(SyncTarget):
         if self.projects_dir.exists():
             paths.append(self.projects_dir)
         return paths
-
-    # ======================================================================
-    # PHASE 1: MIGRATION (repo-side)
-    # Bring repo dir names to canonical shape.  Idempotent.
-    # ======================================================================
 
     def _migrate_repo_names(self, mapping: dict[str, str]) -> None:
         """Rename raw-named project dirs in the repo to their canonical names."""
@@ -130,12 +106,6 @@ class ClaudeCodeTarget(SyncTarget):
                     f"in repo after migration. Check _migrate_repo_names."
                 )
 
-    # ======================================================================
-    # PHASE 2: ADOPTION
-    # Walk source, fix cross-mode shape drift for mapped projects,
-    # record unmapped in repo .pending file, yield (local, repo) pairs.
-    # ======================================================================
-
     def _walk_and_adopt(self, mapping: dict[str, str]) -> list[ProjectPair]:
         """Walk ~/.claude/projects/, classify each, return mapped-only pairs.
 
@@ -156,11 +126,7 @@ class ClaudeCodeTarget(SyncTarget):
     def _classify_project(
         self, project_dir: Path, mapping: dict[str, str]
     ) -> ProjectPair | None:
-        """Classify a single project dir; return a ProjectPair if mapped, else None.
-
-        Applies ensure_real_* shape-fixes for mapped projects in copy mode.
-        Records unmapped projects in the repo-side ``.pending`` file.
-        """
+        """Return a ProjectPair if mapped; record unmapped projects in ``.pending``."""
         raw_name = project_dir.name
         memory_dir = project_dir / "memory"
         local_claude_md = project_dir / "CLAUDE.md"
@@ -173,26 +139,24 @@ class ClaudeCodeTarget(SyncTarget):
             return None
 
         if raw_name in mapping:
-            canonical = mapping[raw_name]
-            canonical_dir = self.repo_base / "claude" / "projects" / canonical
+            return self._mapped_pair(memory_dir, local_claude_md, mapping[raw_name])
 
-            if self.sync_mode == "copy":
-                # Fix shape: memory_dir must be a real dir (not a symlink) in copy mode.
-                if memory_dir.is_symlink():
-                    ensure_real_dir(memory_dir, repo_fallback=canonical_dir)
-                # Fix shape: CLAUDE.md must be a real file (not a symlink) in copy mode.
-                if local_claude_md.is_symlink():
-                    ensure_real_file(local_claude_md, repo_fallback=canonical_dir / "CLAUDE.md")
-
-            return ProjectPair(
-                local_memory=memory_dir,
-                local_claude_md=local_claude_md,
-                repo_dir=canonical_dir,
-            )
-
-        # Unmapped — record in shared repo .pending file.  No local writes.
         self._flag_unmapped(project_dir)
         return None
+
+    def _mapped_pair(self, memory_dir: Path, local_claude_md: Path, canonical: str) -> ProjectPair:
+        canonical_dir = self.repo_base / "claude" / "projects" / canonical
+        if self.sync_mode == "copy":
+            # Copy mode needs real files; undo links left by an earlier symlink-mode run.
+            if memory_dir.is_symlink():
+                ensure_real_dir(memory_dir, repo_fallback=canonical_dir)
+            if local_claude_md.is_symlink():
+                ensure_real_file(local_claude_md, repo_fallback=canonical_dir / "CLAUDE.md")
+        return ProjectPair(
+            local_memory=memory_dir,
+            local_claude_md=local_claude_md,
+            repo_dir=canonical_dir,
+        )
 
     def _flag_unmapped(self, project_dir: Path) -> None:
         """Record an unmapped project in the shared repo ``.pending`` file."""
@@ -205,12 +169,6 @@ class ClaudeCodeTarget(SyncTarget):
                 raw_name,
                 pending_path(self.repo_base),
             )
-
-    # ======================================================================
-    # PHASE 3: SYNC
-    # Reconcile content and finalise shape.  Assumes clean postcondition
-    # from Phases 1+2 (no dangling symlinks, no raw-named repo dirs).
-    # ======================================================================
 
     def _sync(self, pairs: list[ProjectPair]) -> None:
         """Sync global CLAUDE.md then each project pair."""
@@ -236,41 +194,27 @@ class ClaudeCodeTarget(SyncTarget):
         self._sync_dir(pair.local_memory, pair.repo_dir, label=pair.local_claude_md.parent.name)
 
     def _sync_file(self, local: Path, repo: Path, label: str) -> None:
-        """Reconcile a single file between local and repo per sync_mode.
-
-        Precondition (Phase 2 guarantee): *local* is either a real file,
-        absent, or already a correct symlink — never a dangling/wrong symlink.
-
-        symlink mode:
-          - Already a symlink → no-op (Phase 2 left it in place or Phase 3
-            is re-entering an already-adopted file).
-          - local is a real file:
-              - repo missing → copy local → repo, symlink local → repo.
-              - repo exists, same content → symlink local → repo.
-              - repo exists, differs → merge, then symlink local → repo.
-          - local absent, repo exists → symlink local → repo.
-
-        copy mode:
-          - local exists, repo missing → copy local → repo.
-          - repo exists, local missing → copy repo → local.
-          - both exist, differ → delegate to merge_conflicting_file.
-          - both identical → no-op.
-        """
+        """Reconcile a single file between local and repo per sync_mode."""
         if self.sync_mode == "copy":
-            if local.is_file():
-                if not repo.exists():
-                    repo.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(local, repo)
-                    log.info("Copied %s into repo (copy mode)", label)
-                elif not filecmp.cmp(local, repo, shallow=False):
-                    merge_conflicting_file(local=local, repo=repo)
-            elif repo.exists():
-                local.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(repo, local)
-                log.info("Copied %s -> local (copy mode)", label)
-            return
+            self._sync_file_copy(local, repo, label)
+        else:
+            self._sync_file_symlink(local, repo, label)
 
-        # symlink mode
+    def _sync_file_copy(self, local: Path, repo: Path, label: str) -> None:
+        if local.is_file():
+            if not repo.exists():
+                repo.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(local, repo)
+                log.info("Copied %s into repo (copy mode)", label)
+            elif not filecmp.cmp(local, repo, shallow=False):
+                merge_conflicting_file(local=local, repo=repo)
+        elif repo.exists():
+            local.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(repo, local)
+            log.info("Copied %s -> local (copy mode)", label)
+
+    def _sync_file_symlink(self, local: Path, repo: Path, label: str) -> None:
+        # Phase 2 guarantees an existing link is correct, never dangling or wrong.
         if local.is_symlink():
             return
 
@@ -289,49 +233,38 @@ class ClaudeCodeTarget(SyncTarget):
             log.info("Symlinked %s (from repo)", label)
 
     def _sync_dir(self, local_memory: Path, repo_dir: Path, label: str) -> None:
-        """Reconcile the memory/ directory between local and repo per sync_mode.
-
-        Precondition: local_memory is a real dir, absent, or correct symlink
-        (Phase 2 ensured no wrong-mode symlinks remain for mapped projects).
-
-        symlink mode:
-          - Already a symlink pointing at repo_dir → no-op.
-          - Real dir with files → copy files to repo_dir, verify, rmtree, symlink.
-          - Absent, repo_dir exists → create symlink.
-
-        copy mode:
-          - Already a real dir (Phase 2 guarantee) → copy files bidirectionally.
-          - Absent → create and sync from repo.
-        """
+        """Reconcile the memory/ directory between local and repo per sync_mode."""
         if self.sync_mode == "copy":
-            local_memory.mkdir(parents=True, exist_ok=True)
-            repo_dir.mkdir(parents=True, exist_ok=True)
-            # Copy local → repo
-            for f in local_memory.iterdir():
-                if f.is_dir():
-                    continue
-                dest = repo_dir / f.name
-                if not dest.exists():
-                    shutil.copy2(f, dest)
-                elif not filecmp.cmp(f, dest, shallow=False):
-                    merge_conflicting_file(local=f, repo=dest)
-            # Copy repo → local (files only in repo, e.g. from another device)
-            for f in repo_dir.iterdir():
-                if f.is_dir():
-                    continue
-                dest = local_memory / f.name
-                if not dest.exists():
-                    shutil.copy2(f, dest)
-            return
+            self._sync_dir_copy(local_memory, repo_dir)
+        else:
+            self._sync_dir_symlink(local_memory, repo_dir, label)
 
-        # symlink mode
+    def _sync_dir_copy(self, local_memory: Path, repo_dir: Path) -> None:
+        local_memory.mkdir(parents=True, exist_ok=True)
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        for f in local_memory.iterdir():
+            if f.is_dir():
+                continue
+            dest = repo_dir / f.name
+            if not dest.exists():
+                shutil.copy2(f, dest)
+            elif not filecmp.cmp(f, dest, shallow=False):
+                merge_conflicting_file(local=f, repo=dest)
+        # Files only in the repo, e.g. from another device.
+        for f in repo_dir.iterdir():
+            if f.is_dir():
+                continue
+            dest = local_memory / f.name
+            if not dest.exists():
+                shutil.copy2(f, dest)
+
+    def _sync_dir_symlink(self, local_memory: Path, repo_dir: Path, label: str) -> None:
+        # Phase 2 guarantees an existing link is correct, never dangling or wrong.
         if local_memory.is_symlink():
-            # Already adopted — leave in place (Phase 2 verified it's not a wrong symlink).
             return
 
         if local_memory.is_dir():
             repo_dir.mkdir(parents=True, exist_ok=True)
-            # Copy files local → repo
             for f in local_memory.iterdir():
                 if f.is_dir():
                     continue
@@ -349,14 +282,10 @@ class ClaudeCodeTarget(SyncTarget):
             shutil.rmtree(local_memory)
             local_memory.symlink_to(repo_dir)
             log.info("Adopted project memory: %s -> %s", label, repo_dir.name)
-            
+
         elif repo_dir.exists() and not local_memory.exists():
             local_memory.symlink_to(repo_dir)
             log.info("Symlinked memory for %s (from repo)", label)
-
-    # ======================================================================
-    # INTERNAL UTILITIES
-    # ======================================================================
 
     def _verify_migration(self, source_dir: Path, target_dir: Path) -> bool:
         """Check that every file in source_dir has a corresponding file in target_dir."""

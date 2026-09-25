@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from src.transport import sync_repository
+from src.git_sync.isolated import sync_repository
 
 
 def git(root, *args, check=True):

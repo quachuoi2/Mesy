@@ -37,24 +37,30 @@ Canonical module map. Self-explanatory files (`config.py`, `base.py`, most tests
 
 ```
 src/
-├── main.py           # Daemon loop (watchdog or polling), multi-repo
-├── git_utils.py      # LEGACY transport — merges in the live worktree
-├── transport.py      # CODEX transport — merges in a detached worktree
+├── main.py           # Daemon start-up only
+├── factory.py        # RepoContext; builds targets + git sync; config checks
+├── cycle.py          # Per repo: scan_repo, commit_repo, pull_repo, first_sync
+├── watch.py          # Watchdog loop, polling loop, change detection
 ├── links.py          # Verified symlink adoption, backups, conflict capture
 ├── sync_state.py     # Content hashes for copy-mode three-way sync
 ├── pending.py        # Unmapped Claude Code projects
+├── git_sync/
+│   ├── base.py          # GitSync interface
+│   ├── legacy.py        # LegacyGitSync — merges in the live worktree
+│   └── isolated.py      # IsolatedGitSync — merges in a detached worktree
 └── targets/
     ├── claude_code.py   # Maps per-device project names to canonical ones
     ├── codex.py         # Symlink only, optional memory exports
     ├── generic.py       # Any flat .md directory
+    ├── _merge.py        # Conflict merge into one file (copy mode)
     └── _migration.py    # Initial file migration helpers
 
 tests/
-├── test_transport.py              # Transport decisions, git mocked
-└── test_transport_integration.py  # Transport against real local git repos
+├── test_transport.py              # Isolated git sync decisions, git mocked
+└── test_transport_integration.py  # Isolated git sync against real local git repos
 ```
 
-Two transports coexist: a repo containing a Codex target uses `transport.py` for **all** its targets.
+Two git syncs coexist: a repo containing a Codex target uses `IsolatedGitSync` for **all** its targets. `factory.py` is the only module that knows concrete target classes.
 
 ## Architecture
 

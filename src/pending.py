@@ -60,6 +60,14 @@ def _render(raw_names: list[str], hostname: str, now_iso: str) -> str:
     )
 
 
+def _rewrite(path: Path, raw_names: list[str]) -> None:
+    path.write_text(_render(
+        raw_names,
+        hostname=socket.gethostname(),
+        now_iso=datetime.now(timezone.utc).isoformat(),
+    ))
+
+
 def add_pending(repo_base: Path, raw_name: str) -> bool:
     """Record an unmapped raw project name in the shared ``.pending`` file.
 
@@ -75,11 +83,7 @@ def add_pending(repo_base: Path, raw_name: str) -> bool:
     if added:
         existing.append(raw_name)
 
-    path.write_text(_render(
-        existing,
-        hostname=socket.gethostname(),
-        now_iso=datetime.now(timezone.utc).isoformat(),
-    ))
+    _rewrite(path, existing)
     return added
 
 
@@ -101,9 +105,5 @@ def prune_pending(repo_base: Path, mapping: dict[str, str]) -> list[str]:
         path.unlink()
         return removed
     if removed:
-        path.write_text(_render(
-            remaining,
-            hostname=socket.gethostname(),
-            now_iso=datetime.now(timezone.utc).isoformat(),
-        ))
+        _rewrite(path, remaining)
     return removed

@@ -115,42 +115,63 @@ class LinkManager:
         before = inventory(original)
         remote = inventory(destination)
         original_existed = original.exists()
+        if not directory and original_link is None and before and remote and before != remote:
+            remote = self._repair_replaced_link(source, original, destination, before, remote)
+        self._refuse_divergence(source, original, destination, before, remote)
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.parent.mkdir(parents=True, exist_ok=True)
+        self._probe_link_support(source, destination, directory)
+        backup = self._backup_original(source, original, destination, original_link)
+        self._copy_into(source, original, destination, directory, before, original_existed)
+        self._swap_in_link(source, destination, directory, backup)
+        self._remember(source, destination)
+        return True
+
+    def _repair_replaced_link(self, source: Path, original: Path, destination: Path,
+                              before: dict, remote: dict) -> dict:
+        """An atomic save can replace a file link. Accept it only when the
+        repository still matches the last observed linked version."""
         baseline_path = self._baseline_path(source)
-        # An atomic save can replace a file link. Accept it only when the
-        # repository still matches the last observed linked version.
-        if not directory and original_link is None and before and remote and before != remote and baseline_path.exists():
-            try:
-                baseline = {k: tuple(v) for k, v in json.loads(baseline_path.read_text()).items()}
-            except (OSError, ValueError, TypeError, AttributeError):
-                baseline = None
-            if baseline == remote:
-                backup = self.state_dir / "backups" / uuid.uuid4().hex
-                backup.mkdir(parents=True)
-                shutil.copy2(destination, backup / "repository")
-                # Recheck immediately before publication, preserving both on a race.
-                if inventory(original) != before or inventory(destination) != remote:
-                    raise RuntimeError(f"Content changed during link repair: {source}")
-                atomic_write(destination, original.read_bytes())
-                shutil.copymode(original, destination)
-                remote = inventory(destination)
+        if not baseline_path.exists():
+            return remote
+        try:
+            baseline = {k: tuple(v) for k, v in json.loads(baseline_path.read_text()).items()}
+        except (OSError, ValueError, TypeError, AttributeError):
+            return remote
+        if baseline != remote:
+            return remote
+        backup = self.state_dir / "backups" / uuid.uuid4().hex
+        backup.mkdir(parents=True)
+        shutil.copy2(destination, backup / "repository")
+        # Recheck immediately before publication, preserving both on a race.
+        if inventory(original) != before or inventory(destination) != remote:
+            raise RuntimeError(f"Content changed during link repair: {source}")
+        atomic_write(destination, original.read_bytes())
+        shutil.copymode(original, destination)
+        return inventory(destination)
+
+    def _refuse_divergence(self, source: Path, original: Path, destination: Path,
+                           before: dict, remote: dict) -> None:
         # Empty directory roots are compatible; overlapping different files are not.
         differences = [key for key in before.keys() & remote.keys() if before[key] != remote[key]]
         # File versus directory collisions must also be caught before any copying.
         if any(key.rstrip("/") in {k.rstrip("/") for k in remote}
                and key not in remote for key in before):
             differences.append("file/directory collision")
-        if differences:
-            fingerprint = hashlib.sha256(json.dumps([str(source), str(destination), before, remote], sort_keys=True).encode()).hexdigest()[:20]
-            conflict = self.state_dir / "conflicts" / fingerprint
-            if not conflict.exists():
-                conflict.mkdir(parents=True)
-                copy_path(original, conflict / "local")
-                copy_path(destination, conflict / "repository")
-                atomic_write(conflict / "paths.json", json.dumps({"source": str(source), "destination": str(destination)}, indent=2).encode())
-            raise LinkConflict(f"Divergent files at {source}; versions saved in {conflict}")
+        if not differences:
+            return
+        fingerprint = hashlib.sha256(json.dumps([str(source), str(destination), before, remote], sort_keys=True).encode()).hexdigest()[:20]
+        conflict = self.state_dir / "conflicts" / fingerprint
+        if not conflict.exists():
+            conflict.mkdir(parents=True)
+            copy_path(original, conflict / "local")
+            copy_path(destination, conflict / "repository")
+            atomic_write(conflict / "paths.json", json.dumps({"source": str(source), "destination": str(destination)}, indent=2).encode())
+        raise LinkConflict(f"Divergent files at {source}; versions saved in {conflict}")
 
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        source.parent.mkdir(parents=True, exist_ok=True)
+    @staticmethod
+    def _probe_link_support(source: Path, destination: Path, directory: bool) -> None:
         # Probe link support before moving any source content (notably on Windows).
         probe = source.parent / (".mesy-link-" + uuid.uuid4().hex)
         try:
@@ -159,11 +180,18 @@ class LinkManager:
             if probe.is_symlink():
                 probe.unlink()
 
+    def _backup_original(self, source: Path, original: Path, destination: Path,
+                         original_link: str | None) -> Path:
         backup = self.state_dir / "backups" / uuid.uuid4().hex
         if original.exists():
             backup.mkdir(parents=True)
             copy_path(original, backup / "content")
             atomic_write(backup / "paths.json", json.dumps({"source": str(source), "destination": str(destination), "original_link": original_link}, indent=2).encode())
+        return backup
+
+    @staticmethod
+    def _copy_into(source: Path, original: Path, destination: Path, directory: bool,
+                   before: dict, original_existed: bool) -> None:
         if directory:
             destination.mkdir(parents=True, exist_ok=True)
             if original.exists():
@@ -181,6 +209,8 @@ class LinkManager:
         if (original_existed and inventory(original) != before) or any(after.get(k) != v for k, v in before.items()):
             raise RuntimeError(f"Content changed during adoption; source retained: {source}")
 
+    @staticmethod
+    def _swap_in_link(source: Path, destination: Path, directory: bool, backup: Path) -> None:
         # Rename the original rather than deleting it. Restore it if link creation fails.
         saved = source.parent / (".mesy-original-" + uuid.uuid4().hex)
         existed = source.exists() or source.is_symlink()
@@ -196,8 +226,6 @@ class LinkManager:
             # Keep the exact displaced object for crash recovery and rollback.
             backup.mkdir(parents=True, exist_ok=True)
             shutil.move(str(saved), str(backup / "displaced"))
-        self._remember(source, destination)
-        return True
 
     def materialize(self, source: Path, destination: Path) -> bool:
         """Detach a managed link, retaining the latest synced content locally."""

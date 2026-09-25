@@ -47,6 +47,10 @@ class SyncTarget(ABC):
         """Detect new files needing symlinks. Called periodically."""
         ...
 
+    def get_source_paths(self) -> list[Path]:
+        """Return local paths whose changes should trigger a sync."""
+        return [self.source]
+
     def get_watched_paths(self) -> list[Path]:
         """Return paths that should be watched for changes."""
         return [self.source, self.repo_dir]

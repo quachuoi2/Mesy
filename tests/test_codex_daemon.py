@@ -8,8 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 
 import setup
-from src.config import RepoContext, load_targets
-from src.main import _commit_context, _pull_context, _scan_context, run_with_watchdog
+from src.config import load_targets
+from src.cycle import commit_repo, pull_repo, scan_repo
+from src.factory import RepoContext
+from src.git_sync.isolated import IsolatedGitSync
+from src.watch import run_with_watchdog
 from src.targets.codex import CodexTarget
 
 
@@ -21,23 +24,23 @@ def context(tmp_path):
     target.scan()
     return RepoContext("data", data, [target], target.get_stage_dirs(), {
         "debounce_seconds": "1", "scan_interval_seconds": "1", "pull_interval_seconds": "1",
-    })
+    }, git_sync=IsolatedGitSync())
 
 
 def test_codex_uses_safe_transport_not_legacy_git(context, monkeypatch):
     transport = MagicMock(return_value=True)
-    monkeypatch.setattr("src.main.sync_repository", transport)
+    monkeypatch.setattr("src.git_sync.isolated.sync_repository", transport)
     legacy = MagicMock()
-    monkeypatch.setattr("src.main.commit_and_push", legacy)
-    _commit_context(context)
+    monkeypatch.setattr("src.git_sync.legacy.commit_and_push", legacy)
+    commit_repo(context)
     transport.assert_called_once()
     legacy.assert_not_called()
 
 
 def test_periodic_pull_retries_without_new_files(context, monkeypatch):
     transport = MagicMock(return_value=True)
-    monkeypatch.setattr("src.main.sync_repository", transport)
-    _pull_context(context)
+    monkeypatch.setattr("src.git_sync.isolated.sync_repository", transport)
+    pull_repo(context)
     transport.assert_called_once()
 
 
@@ -46,22 +49,22 @@ def test_scan_error_does_not_stop_other_targets(context):
     first.scan.side_effect = OSError("disk full")
     second = MagicMock(name="healthy")
     context.targets = [first, second]
-    assert not _scan_context(context)
+    assert not scan_repo(context)
     second.scan.assert_called_once()
 
 
 def test_watchdog_ignores_reads_and_accepts_atomic_moves(context, monkeypatch):
     pytest.importorskip("watchdog")
     observer = MagicMock()
-    monkeypatch.setattr("src.main.Observer", lambda: observer)
+    monkeypatch.setattr("src.watch.Observer", lambda: observer)
     def stop(_):
         raise KeyboardInterrupt
-    monkeypatch.setattr("src.main.time.sleep", stop)
-    run_with_watchdog([context], context.settings)
+    monkeypatch.setattr("src.watch.time.sleep", stop)
+    run_with_watchdog([context])
     handler = observer.schedule.call_args_list[0].args[0]
     # A read should not call time.time() or trigger a sync.
     clock = MagicMock(return_value=100)
-    monkeypatch.setattr("src.main.time.time", clock)
+    monkeypatch.setattr("src.watch.time.time", clock)
     handler.on_any_event(SimpleNamespace(event_type="opened", src_path=str(context.data_dir / "codex/global/AGENTS.md")))
     clock.assert_not_called()
     handler.on_any_event(SimpleNamespace(event_type="moved", src_path=str(context.targets[0].source / "tmp"), dest_path=str(context.targets[0].source / "AGENTS.md")))

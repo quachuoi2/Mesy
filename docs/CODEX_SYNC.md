@@ -144,15 +144,15 @@ managed entry points and may be recreated; disable the target to retire them.
 
 ## Git behavior
 
-A data repository containing a Codex target uses an isolated-merge transport for
+A data repository containing a Codex target uses an isolated-merge git sync for
 **all its targets**, including existing Claude/OpenClaw targets. Repositories
-without a Codex target retain the legacy transport.
+without a Codex target retain the legacy git sync.
 
-The transport commits only configured paths using `git commit --only`. Unrelated
+The isolated git sync commits only configured paths using `git commit --only`. Unrelated
 staged and modified tracked files remain untouched and defer remote integration.
 It fetches `origin` and uses the current local branch name as the remote branch.
 Use a normal checked-out branch with Git identity and an `origin` remote configured.
-The legacy transport derives the branch the same way, falling back to `main` on a
+The legacy git sync derives the branch the same way, falling back to `main` on a
 detached HEAD.
 
 Remote merges run in a temporary detached worktree. Only a successful merge is

@@ -22,7 +22,6 @@ def tmp_repo(tmp_path, monkeypatch):
     monkeypatch.setattr("src.config.REPOS_CONF_PATH", repo / "repos.conf")
 
     # Propagate to all modules that import REPO_DIR directly
-    monkeypatch.setattr("src.git_utils.REPO_DIR", repo)
     monkeypatch.setattr("src.main.REPO_DIR", repo)
 
     return repo

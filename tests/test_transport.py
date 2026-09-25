@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.transport import sync_repository
+from src.git_sync.isolated import sync_repository
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ class GitScenario:
 
 def test_clean_worktree_retries_push(repository, monkeypatch):
     git = GitScenario(repository)
-    monkeypatch.setattr("src.transport.run_git", git)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", git)
     assert sync_repository(repository, ["codex/global/AGENTS.md"])
     assert any(args[0] == "push" for _, args in git.calls)
     assert not any(args[0] == "commit" for _, args in git.calls)
@@ -78,7 +78,7 @@ def test_clean_worktree_retries_push(repository, monkeypatch):
 
 def test_commit_scopes_paths_and_preserves_unrelated_index(repository, monkeypatch):
     git = GitScenario(repository, changed=True, dirty=True)
-    monkeypatch.setattr("src.transport.run_git", git)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", git)
     assert not sync_repository(repository, ["codex/global/AGENTS.md"])
     commits = [args for _, args in git.calls if args[0] == "commit"]
     assert len(commits) == 1
@@ -89,7 +89,7 @@ def test_commit_scopes_paths_and_preserves_unrelated_index(repository, monkeypat
 
 def test_clean_merge_runs_outside_live_files_then_fast_forwards(repository, monkeypatch):
     git = GitScenario(repository, divergent=True)
-    monkeypatch.setattr("src.transport.run_git", git)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", git)
     assert sync_repository(repository, ["codex/global/AGENTS.md"])
     merges = [(path, args) for path, args in git.calls if "merge" in args]
     assert merges[0][0] != repository
@@ -99,7 +99,7 @@ def test_clean_merge_runs_outside_live_files_then_fast_forwards(repository, monk
 
 def test_merge_conflict_saves_versions_never_publishes(repository, monkeypatch):
     git = GitScenario(repository, divergent=True, conflict=True)
-    monkeypatch.setattr("src.transport.run_git", git)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", git)
     assert not sync_repository(repository, ["codex/global/AGENTS.md"])
     assert (repository / "codex" / "global" / "AGENTS.md").read_text() == "Instructions"
     saved = repository / ".mesy-local" / "git-conflicts" / "local-head-remote-head"
@@ -109,7 +109,7 @@ def test_merge_conflict_saves_versions_never_publishes(repository, monkeypatch):
 
 def test_offline_failure_leaves_local_commit_for_retry(repository, monkeypatch):
     git = GitScenario(repository, changed=True, offline=True)
-    monkeypatch.setattr("src.transport.run_git", git)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", git)
     assert not sync_repository(repository, ["codex/global/AGENTS.md"])
     assert any(args[0] == "commit" for _, args in git.calls)
     git.changed = False
@@ -120,14 +120,14 @@ def test_offline_failure_leaves_local_commit_for_retry(repository, monkeypatch):
 
 def test_head_race_defers_publication(repository, monkeypatch):
     git = GitScenario(repository, divergent=True, race=True)
-    monkeypatch.setattr("src.transport.run_git", git)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", git)
     assert not sync_repository(repository, ["codex/global/AGENTS.md"])
     assert not any("--ff-only" in args for _, args in git.calls)
 
 
 def test_remote_symlink_never_replaces_live_instructions(repository, monkeypatch):
     git = GitScenario(repository, divergent=True, remote_symlink=True)
-    monkeypatch.setattr("src.transport.run_git", git)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", git)
     assert not sync_repository(repository, ["codex/global/AGENTS.md"])
     assert not any("--ff-only" in args for _, args in git.calls)
 
@@ -135,7 +135,7 @@ def test_remote_symlink_never_replaces_live_instructions(repository, monkeypatch
 @pytest.mark.parametrize("path", [".", "../outside", ".git", ".mesy-local", "/outside"])
 def test_unsafe_staging_path_rejected(repository, monkeypatch, path):
     git = GitScenario(repository)
-    monkeypatch.setattr("src.transport.run_git", git)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", git)
     assert not sync_repository(repository, [path])
     assert not any(args[0] in {"add", "commit", "push"} for _, args in git.calls)
 
@@ -143,7 +143,7 @@ def test_unsafe_staging_path_rejected(repository, monkeypatch, path):
 def test_timeout_is_recoverable(repository, monkeypatch):
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired("git", 30)
-    monkeypatch.setattr("src.transport.run_git", timeout)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", timeout)
     assert not sync_repository(repository, ["codex/global/AGENTS.md"])
 
 
@@ -153,7 +153,7 @@ def test_empty_remote_branch_is_initialized_without_force(repository, monkeypatc
         if args[0] == "ls-remote":
             return subprocess.CompletedProcess(args, 2, "", "")
         return scenario(data_dir, *args, **kwargs)
-    monkeypatch.setattr("src.transport.run_git", empty_remote)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", empty_remote)
     assert sync_repository(repository, ["codex/global/AGENTS.md"])
     assert any(args == ("push", "origin", "HEAD:refs/heads/main") for _, args in scenario.calls)
 
@@ -165,7 +165,7 @@ def test_push_failure_retries_after_clean_restart(repository, monkeypatch):
         if args[0] == "push" and failed[0]:
             return subprocess.CompletedProcess(args, 128, "", "network unavailable")
         return scenario(data_dir, *args, **kwargs)
-    monkeypatch.setattr("src.transport.run_git", push_failure)
+    monkeypatch.setattr("src.git_sync.isolated.run_git", push_failure)
     assert not sync_repository(repository, ["codex/global/AGENTS.md"])
     failed[0] = False
     assert sync_repository(repository, ["codex/global/AGENTS.md"])

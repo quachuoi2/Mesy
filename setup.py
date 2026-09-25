@@ -11,6 +11,7 @@ own `sync.conf`, and installs the background daemon.
 """
 
 import filecmp
+import fnmatch
 import os
 import platform
 import shutil
@@ -24,6 +25,7 @@ from pathlib import Path
 
 from src.config import load_project_mappings, load_repos, load_config, load_targets
 from src.pending import add_pending
+from src.targets._merge import split_frontmatter
 
 REPO_DIR = Path(__file__).resolve().parent
 REPOS_CONF_PATH = REPO_DIR / "repos.conf"
@@ -98,52 +100,59 @@ def _setup_git_sync(data_dir: Path) -> None:
         log("warn", f"No remote configured — {data_dir} will not sync until you set one up")
         return
 
-    is_empty = not any(data_dir.iterdir())
-    if is_empty:
-        data_dir.rmdir()
-        result = subprocess.run(
-            ["git", "clone", url, str(data_dir)],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            log("error", f"git clone failed: {result.stderr.strip()}")
-            data_dir.mkdir(parents=True, exist_ok=True)
-            return
-        log("ok", f"Cloned {url} into {data_dir}")
+    if not any(data_dir.iterdir()):
+        _clone(data_dir, url)
+    else:
+        _init_with_remote(data_dir, url)
+
+
+def _clone(data_dir: Path, url: str) -> None:
+    data_dir.rmdir()
+    result = subprocess.run(
+        ["git", "clone", url, str(data_dir)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        log("error", f"git clone failed: {result.stderr.strip()}")
+        data_dir.mkdir(parents=True, exist_ok=True)
         return
+    log("ok", f"Cloned {url} into {data_dir}")
 
-    def _git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["git", "-C", str(data_dir), *args],
-            capture_output=True, text=True,
-        )
 
-    if _git("init").returncode != 0:
+def _git(data_dir: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(data_dir), *args],
+        capture_output=True, text=True,
+    )
+
+
+def _init_with_remote(data_dir: Path, url: str) -> None:
+    if _git(data_dir, "init").returncode != 0:
         log("error", "git init failed")
         return
-    if _git("remote", "add", "origin", url).returncode != 0:
+    if _git(data_dir, "remote", "add", "origin", url).returncode != 0:
         log("error", "git remote add failed")
         return
 
-    fetch = _git("fetch", "origin")
+    fetch = _git(data_dir, "fetch", "origin")
     if fetch.returncode != 0:
         log("warn", f"git fetch failed: {fetch.stderr.strip()} — leaving repo initialized")
         return
 
     # Determine remote default branch (fall back to main).
-    head = _git("symbolic-ref", "refs/remotes/origin/HEAD")
+    head = _git(data_dir, "symbolic-ref", "refs/remotes/origin/HEAD")
     if head.returncode == 0 and head.stdout.strip():
         branch = head.stdout.strip().rsplit("/", 1)[-1]
     else:
         branch = "main"
 
-    _git("checkout", "-b", branch)
-    pull = _git("pull", "origin", branch, "--allow-unrelated-histories")
+    _git(data_dir, "checkout", "-b", branch)
+    pull = _git(data_dir, "pull", "origin", branch, "--allow-unrelated-histories")
     if pull.returncode != 0:
         log("warn", f"git pull failed: {pull.stderr.strip()}")
         return
 
-    _git("branch", f"--set-upstream-to=origin/{branch}", branch)
+    _git(data_dir, "branch", f"--set-upstream-to=origin/{branch}", branch)
     log("ok", f"Initialized {data_dir} with remote {url} (branch {branch})")
 
 
@@ -177,50 +186,16 @@ def prompt_repos_conf() -> list[dict]:
     keys 'name' and 'path' (same shape as src.config.load_repos).
     """
     existing = load_repos()
-
-    if existing:
-        print(f"Found {len(existing)} repo(s) in repos.conf:")
-        for r in existing:
-            print(f"  [{r['name']}] {r['path']}")
-        if input("Add another data repo? [y/N]: ").strip().lower() != "y":
-            return existing
-    else:
-        print("No data repos registered yet. Add at least one.")
+    if not _want_more_repos(existing):
+        return existing
 
     cfg = _read_repos_conf()
     existing_names = {r["name"] for r in existing}
     new_repos: list[dict] = []
 
     while True:
-        name = input("Repo name (e.g. alfred-memory): ").strip()
-        if not name:
-            log("error", "Name cannot be empty")
-            continue
-        if name in existing_names or any(r["name"] == name for r in new_repos):
-            log("error", f"Name '{name}' already registered")
-            continue
-
-        while True:
-            raw_path = input("Repo path: ").strip()
-            if not raw_path:
-                log("error", "Path cannot be empty")
-                continue
-            resolved = _repo_path_valid(raw_path)
-            if resolved is None:
-                continue
-
-            if not resolved.exists():
-                create = input(f"Directory {resolved} does not exist. Create it? [Y/n]: ").strip().lower()
-                if create in ("", "y"):
-                    resolved.mkdir(parents=True, exist_ok=True)
-                else:
-                    log("error", "Skipping — path must exist")
-                    continue
-            elif not resolved.is_dir():
-                log("error", f"{resolved} is not a directory")
-                continue
-
-            break
+        name = _prompt_name(existing_names | {r["name"] for r in new_repos})
+        resolved = _prompt_path()
 
         _setup_git_sync(resolved)
 
@@ -237,6 +212,52 @@ def prompt_repos_conf() -> list[dict]:
         log("ok", f"Wrote {len(new_repos)} new repo(s) to repos.conf")
 
     return existing + new_repos
+
+
+def _want_more_repos(existing: list[dict]) -> bool:
+    if not existing:
+        print("No data repos registered yet. Add at least one.")
+        return True
+    print(f"Found {len(existing)} repo(s) in repos.conf:")
+    for r in existing:
+        print(f"  [{r['name']}] {r['path']}")
+    return input("Add another data repo? [y/N]: ").strip().lower() == "y"
+
+
+def _prompt_name(taken: set[str]) -> str:
+    while True:
+        name = input("Repo name (e.g. alfred-memory): ").strip()
+        if not name:
+            log("error", "Name cannot be empty")
+            continue
+        if name in taken:
+            log("error", f"Name '{name}' already registered")
+            continue
+        return name
+
+
+def _prompt_path() -> Path:
+    while True:
+        raw_path = input("Repo path: ").strip()
+        if not raw_path:
+            log("error", "Path cannot be empty")
+            continue
+        resolved = _repo_path_valid(raw_path)
+        if resolved is None:
+            continue
+
+        if not resolved.exists():
+            create = input(f"Directory {resolved} does not exist. Create it? [Y/n]: ").strip().lower()
+            if create in ("", "y"):
+                resolved.mkdir(parents=True, exist_ok=True)
+            else:
+                log("error", "Skipping — path must exist")
+                continue
+        elif not resolved.is_dir():
+            log("error", f"{resolved} is not a directory")
+            continue
+
+        return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -276,21 +297,6 @@ def load_sync_conf_targets(data_dir: Path) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def _split_frontmatter(text: str) -> tuple[str, dict]:
-    """Split markdown into (body, frontmatter_dict)."""
-    if not text.startswith("---\n"):
-        return text, {}
-    parts = text.split("---\n", 2)
-    if len(parts) < 3:
-        return text, {}
-    fm = {}
-    for line in parts[1].strip().split("\n"):
-        if ": " in line:
-            key, val = line.split(": ", 1)
-            fm[key.strip()] = val.strip()
-    return parts[2], fm
-
-
 def merge_conflicting_file(local: Path, repo: Path) -> None:
     """Merge two differing files by keeping both versions with conflict markers."""
     hostname = socket.gethostname()
@@ -299,8 +305,8 @@ def merge_conflicting_file(local: Path, repo: Path) -> None:
     local_content = local.read_text()
     repo_content = repo.read_text()
 
-    local_body, local_fm = _split_frontmatter(local_content)
-    repo_body, repo_fm = _split_frontmatter(repo_content)
+    local_body, local_fm = split_frontmatter(local_content)
+    repo_body, repo_fm = split_frontmatter(repo_content)
 
     merged_fm = {**repo_fm, **local_fm, "conflict": "true"}
     fm_lines = "\n".join(f"{k}: {v}" for k, v in merged_fm.items())
@@ -317,25 +323,25 @@ def merge_conflicting_file(local: Path, repo: Path) -> None:
     log("conflict", f"  {repo.name}: both versions preserved (conflict: true)")
 
 
+def _already_linked(link: Path, target: Path, label: str) -> bool:
+    """True when *link* already points at *target*; a link elsewhere is removed."""
+    if not link.is_symlink():
+        return False
+    if link.resolve() == target.resolve():
+        log("ok", f"Symlink already exists: {label}")
+        return True
+    log("relink", f"Updating symlink: {label} -> {target}")
+    link.unlink()
+    return False
+
+
 def make_file_symlink(link: Path, target: Path) -> None:
     """Create a symlink for a single file, migrating existing content if needed."""
-    if link.is_symlink():
-        if link.resolve() == target.resolve():
-            log("ok", f"Symlink already exists: {link.name}")
-            return
-        log("relink", f"Updating symlink: {link.name} -> {target}")
-        link.unlink()
+    if _already_linked(link, target, link.name):
+        return
 
     if link.is_file():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists():
-            shutil.copy2(link, target)
-            log("migrate", f"Copied {link.name} into repo")
-        elif not filecmp.cmp(link, target, shallow=False):
-            merge_conflicting_file(local=link, repo=target)
-        else:
-            log("ok", f"{link.name} identical, skipping")
-        link.unlink()
+        _move_file_into_repo(link, target)
     elif not target.exists():
         return
 
@@ -353,30 +359,25 @@ def make_file_symlink(link: Path, target: Path) -> None:
         log("ok", f"Symlinked {link.name}")
 
 
+def _move_file_into_repo(link: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        shutil.copy2(link, target)
+        log("migrate", f"Copied {link.name} into repo")
+    elif not filecmp.cmp(link, target, shallow=False):
+        merge_conflicting_file(local=link, repo=target)
+    else:
+        log("ok", f"{link.name} identical, skipping")
+    link.unlink()
+
+
 def make_symlink(link: Path, target: Path) -> None:
     """Create a symlink for a directory, with Windows-compatible support."""
-    if link.is_symlink():
-        if link.resolve() == target.resolve():
-            log("ok", f"Symlink already exists: {link}")
-            return
-        log("relink", f"Updating symlink: {link} -> {target}")
-        link.unlink()
+    if _already_linked(link, target, str(link)):
+        return
 
     if link.is_dir():
-        log("migrate", f"Moving existing memory from {link}")
-        target.mkdir(parents=True, exist_ok=True)
-        for f in link.iterdir():
-            if f.is_dir():
-                continue
-            dest = target / f.name
-            if not dest.exists():
-                shutil.copy2(f, dest)
-                log("migrate", f"  copied {f.name}")
-            elif not filecmp.cmp(f, dest, shallow=False):
-                merge_conflicting_file(local=f, repo=dest)
-            else:
-                log("ok", f"  {f.name} identical, skipping")
-        shutil.rmtree(link)
+        _move_dir_into_repo(link, target)
 
     link.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(parents=True, exist_ok=True)
@@ -396,6 +397,23 @@ def make_symlink(link: Path, target: Path) -> None:
     else:
         os.symlink(target, link)
         log("ok", f"Symlinked {link.name}")
+
+
+def _move_dir_into_repo(link: Path, target: Path) -> None:
+    log("migrate", f"Moving existing memory from {link}")
+    target.mkdir(parents=True, exist_ok=True)
+    for f in link.iterdir():
+        if f.is_dir():
+            continue
+        dest = target / f.name
+        if not dest.exists():
+            shutil.copy2(f, dest)
+            log("migrate", f"  copied {f.name}")
+        elif not filecmp.cmp(f, dest, shallow=False):
+            merge_conflicting_file(local=f, repo=dest)
+        else:
+            log("ok", f"  {f.name} identical, skipping")
+    shutil.rmtree(link)
 
 
 # ---------------------------------------------------------------------------
@@ -435,27 +453,28 @@ def setup_claude_code_symlinks(data_dir: Path) -> None:
     claude_projects_dir = CLAUDE_DIR / "projects"
     if claude_projects_dir.exists():
         for project_dir in claude_projects_dir.iterdir():
-            if not project_dir.is_dir():
-                continue
-            raw_name = project_dir.name
-            memory_path = project_dir / "memory"
+            if project_dir.is_dir():
+                _link_project(data_dir, project_dir, mapping)
 
-            if memory_path.is_symlink():
-                continue
+    _prelink_mapped(data_dir, claude_projects_dir, mapping)
 
-            if raw_name in mapping:
-                canonical = mapping[raw_name]
-                canonical_dir = data_dir / "claude" / "projects" / canonical
-                make_symlink(memory_path, canonical_dir)
-                make_file_symlink(
-                    project_dir / "CLAUDE.md",
-                    canonical_dir / "CLAUDE.md",
-                )
-            elif memory_path.is_dir():
-                add_pending(data_dir, raw_name)
-                log("pending", f"{raw_name} has no mapping — recorded in .pending file")
-                log("info", f"  Add to projects.conf: [YourProjectName] / paths = {raw_name}")
 
+def _link_project(data_dir: Path, project_dir: Path, mapping: dict[str, str]) -> None:
+    raw_name = project_dir.name
+    memory_path = project_dir / "memory"
+
+    if memory_path.is_symlink():
+        return
+
+    if raw_name in mapping:
+        _link_to_canonical(project_dir, data_dir / "claude" / "projects" / mapping[raw_name])
+    elif memory_path.is_dir():
+        add_pending(data_dir, raw_name)
+        log("pending", f"{raw_name} has no mapping — recorded in .pending file")
+        log("info", f"  Add to projects.conf: [YourProjectName] / paths = {raw_name}")
+
+
+def _prelink_mapped(data_dir: Path, claude_projects_dir: Path, mapping: dict[str, str]) -> None:
     for raw_name, canonical in mapping.items():
         claude_project_dir = claude_projects_dir / raw_name
         memory_path = claude_project_dir / "memory"
@@ -464,19 +483,21 @@ def setup_claude_code_symlinks(data_dir: Path) -> None:
         canonical_dir = data_dir / "claude" / "projects" / canonical
         if canonical_dir.exists():
             claude_project_dir.mkdir(parents=True, exist_ok=True)
-            make_symlink(memory_path, canonical_dir)
-            make_file_symlink(
-                claude_project_dir / "CLAUDE.md",
-                canonical_dir / "CLAUDE.md",
-            )
+            _link_to_canonical(claude_project_dir, canonical_dir)
             log("ok", f"Pre-linked {raw_name} -> {canonical}")
+
+
+def _link_to_canonical(project_dir: Path, canonical_dir: Path) -> None:
+    make_symlink(project_dir / "memory", canonical_dir)
+    make_file_symlink(
+        project_dir / "CLAUDE.md",
+        canonical_dir / "CLAUDE.md",
+    )
 
 
 def setup_generic_target(data_dir: Path, name: str, source: Path, repo_subdir: str,
                          file_patterns: list[str], exclude: list[str]) -> None:
     """Set up a generic sync target: copy files into repo, replace with symlinks."""
-    import fnmatch
-
     repo_dir = data_dir / repo_subdir
 
     if not source.exists():
@@ -485,69 +506,70 @@ def setup_generic_target(data_dir: Path, name: str, source: Path, repo_subdir: s
 
     log("info", f"[{name}] Setting up: {source} -> {repo_dir}")
     repo_dir.mkdir(parents=True, exist_ok=True)
+    _adopt_dir(source, repo_dir, name, file_patterns, exclude)
 
-    def should_exclude(item_name: str) -> bool:
-        for pattern in exclude:
-            if fnmatch.fnmatch(item_name, pattern.rstrip("/")):
-                return True
-        return False
 
-    def adopt_dir(src: Path, dest: Path) -> None:
-        dest.mkdir(parents=True, exist_ok=True)
-        for item in sorted(src.iterdir()):
-            if should_exclude(item.name):
-                log("skip", f"  [{name}] Excluded: {item.name}")
-                continue
-            if item.is_symlink():
-                continue
-            if item.is_dir():
-                adopt_dir(item, dest / item.name)
-                continue
-            if not any(fnmatch.fnmatch(item.name, pat) for pat in file_patterns):
-                continue
+def _adopt_dir(src: Path, dest: Path, name: str, file_patterns: list[str], exclude: list[str]) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in sorted(src.iterdir()):
+        if any(fnmatch.fnmatch(item.name, pattern.rstrip("/")) for pattern in exclude):
+            log("skip", f"  [{name}] Excluded: {item.name}")
+            continue
+        if item.is_symlink():
+            continue
+        if item.is_dir():
+            _adopt_dir(item, dest / item.name, name, file_patterns, exclude)
+            continue
+        if not any(fnmatch.fnmatch(item.name, pat) for pat in file_patterns):
+            continue
+        _adopt_file(item, dest / item.name, name)
 
-            repo_file = dest / item.name
-            if not repo_file.exists():
-                shutil.copy2(item, repo_file)
-                log("migrate", f"  [{name}] Copied {item.name}")
-            elif not filecmp.cmp(item, repo_file, shallow=False):
-                merge_conflicting_file(local=item, repo=repo_file)
-            else:
-                log("ok", f"  [{name}] {item.name} identical")
+    for repo_file in sorted(dest.iterdir()):
+        _link_repo_item(repo_file, src, name, file_patterns, exclude)
 
-            item.unlink()
-            if IS_WINDOWS:
-                try:
-                    os.symlink(repo_file, item)
-                    log("ok", f"  [{name}] Symlinked {item.name}")
-                except OSError:
-                    shutil.copy2(repo_file, item)
-                    log("warn", f"  [{name}] Symlink failed for {item.name}, copied instead")
-            else:
-                os.symlink(repo_file, item)
-                log("ok", f"  [{name}] Symlinked {item.name}")
 
-        for repo_file in sorted(dest.iterdir()):
-            if repo_file.is_dir():
-                src_sub = src / repo_file.name
-                if not src_sub.exists():
-                    src_sub.mkdir(parents=True, exist_ok=True)
-                if not src_sub.is_symlink():
-                    adopt_dir(src_sub, repo_file)
-                continue
-            if not any(fnmatch.fnmatch(repo_file.name, pat) for pat in file_patterns):
-                continue
-            src_file = src / repo_file.name
-            if src_file.is_symlink():
-                if src_file.resolve() == repo_file.resolve():
-                    continue
-                src_file.unlink()
-            elif src_file.exists():
-                continue
-            os.symlink(repo_file, src_file)
-            log("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
+def _adopt_file(item: Path, repo_file: Path, name: str) -> None:
+    if not repo_file.exists():
+        shutil.copy2(item, repo_file)
+        log("migrate", f"  [{name}] Copied {item.name}")
+    elif not filecmp.cmp(item, repo_file, shallow=False):
+        merge_conflicting_file(local=item, repo=repo_file)
+    else:
+        log("ok", f"  [{name}] {item.name} identical")
 
-    adopt_dir(source, repo_dir)
+    item.unlink()
+    if IS_WINDOWS:
+        try:
+            os.symlink(repo_file, item)
+            log("ok", f"  [{name}] Symlinked {item.name}")
+        except OSError:
+            shutil.copy2(repo_file, item)
+            log("warn", f"  [{name}] Symlink failed for {item.name}, copied instead")
+    else:
+        os.symlink(repo_file, item)
+        log("ok", f"  [{name}] Symlinked {item.name}")
+
+
+def _link_repo_item(repo_file: Path, src: Path, name: str, file_patterns: list[str],
+                    exclude: list[str]) -> None:
+    if repo_file.is_dir():
+        src_sub = src / repo_file.name
+        if not src_sub.exists():
+            src_sub.mkdir(parents=True, exist_ok=True)
+        if not src_sub.is_symlink():
+            _adopt_dir(src_sub, repo_file, name, file_patterns, exclude)
+        return
+    if not any(fnmatch.fnmatch(repo_file.name, pat) for pat in file_patterns):
+        return
+    src_file = src / repo_file.name
+    if src_file.is_symlink():
+        if src_file.resolve() == repo_file.resolve():
+            return
+        src_file.unlink()
+    elif src_file.exists():
+        return
+    os.symlink(repo_file, src_file)
+    log("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
 
 
 def setup_repo(data_dir: Path, seen_target_types: set[str]) -> None:
@@ -557,48 +579,55 @@ def setup_repo(data_dir: Path, seen_target_types: set[str]) -> None:
     been claimed by an earlier repo. Duplicates across repos are skipped
     with a warning.
     """
-    target_defs = load_sync_conf_targets(data_dir)
-
-    for tdef in target_defs:
-        ttype = tdef["type"]
-        # Legacy Claude setup always claims the same ~/.claude directory.
-        # Generic and Codex instances are deduplicated by source ownership instead.
-        key = ttype if ttype == "claude-code" else f"{ttype}:{tdef['source'].absolute()}"
-        if key in seen_target_types:
-            log("warn", f"[{tdef['name']}] target type '{ttype}' already handled by an earlier repo — skipping")
+    for tdef in load_sync_conf_targets(data_dir):
+        if not _claim_target(tdef, seen_target_types):
             continue
-        seen_target_types.add(key)
-
-        if ttype == "codex":
-            from src.main import build_targets
-            target = build_targets([tdef], data_dir)[0]
-            for line in target.preview():
-                log("codex", line)
-            target.setup()
-            continue
-
-        if ttype == "claude-code":
+        if tdef["type"] == "codex":
+            _setup_codex(tdef, data_dir)
+        elif tdef["type"] == "claude-code":
             print(f"--- Claude Code ({data_dir.name}) ---")
             setup_claude_code_symlinks(data_dir)
-            continue
+        elif tdef["type"] == "generic":
+            _setup_generic(tdef, data_dir)
 
-        if ttype == "generic":
-            if tdef.get("sync_mode") == "copy":
-                log(
-                    "info",
-                    f"[{tdef['name']}] Copy-mode target — skipping symlink setup. "
-                    "Will be initialized on first daemon run.",
-                )
-                continue
-            print(f"--- {tdef['name']} ({data_dir.name}) ---")
-            setup_generic_target(
-                data_dir=data_dir,
-                name=tdef["name"],
-                source=tdef["source"],
-                repo_subdir=tdef["repo_subdir"],
-                file_patterns=tdef["file_patterns"],
-                exclude=tdef["exclude"],
-            )
+
+def _claim_target(tdef: dict, seen_target_types: set[str]) -> bool:
+    ttype = tdef["type"]
+    # Legacy Claude setup always claims the same ~/.claude directory.
+    # Generic and Codex instances are deduplicated by source ownership instead.
+    key = ttype if ttype == "claude-code" else f"{ttype}:{tdef['source'].absolute()}"
+    if key in seen_target_types:
+        log("warn", f"[{tdef['name']}] target type '{ttype}' already handled by an earlier repo — skipping")
+        return False
+    seen_target_types.add(key)
+    return True
+
+
+def _setup_codex(tdef: dict, data_dir: Path) -> None:
+    from src.factory import build_targets
+    target = build_targets([tdef], data_dir)[0]
+    for line in target.preview():
+        log("codex", line)
+    target.setup()
+
+
+def _setup_generic(tdef: dict, data_dir: Path) -> None:
+    if tdef.get("sync_mode") == "copy":
+        log(
+            "info",
+            f"[{tdef['name']}] Copy-mode target — skipping symlink setup. "
+            "Will be initialized on first daemon run.",
+        )
+        return
+    print(f"--- {tdef['name']} ({data_dir.name}) ---")
+    setup_generic_target(
+        data_dir=data_dir,
+        name=tdef["name"],
+        source=tdef["source"],
+        repo_subdir=tdef["repo_subdir"],
+        file_patterns=tdef["file_patterns"],
+        exclude=tdef["exclude"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -698,17 +727,7 @@ def main() -> None:
 
     print()
     CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
-
-    seen_target_types: set[str] = set()
-    # Validate every configured target before any repository is migrated.
-    from src.main import _build_repo_contexts
-    _build_repo_contexts(repos)
-    for repo in repos:
-        data_dir = repo["path"]
-        print(f"\n=== Repo: {repo['name']} ({data_dir}) ===")
-        if not ensure_sync_conf(data_dir):
-            continue
-        setup_repo(data_dir, seen_target_types)
+    _setup_repos(repos)
 
     print()
     install_daemon()
@@ -722,13 +741,26 @@ def main() -> None:
         print("Check status: systemctl --user status mesy")
 
 
+def _setup_repos(repos: list[dict]) -> None:
+    seen_target_types: set[str] = set()
+    # Validate every configured target before any repository is migrated.
+    from src.main import build_repo_contexts
+    build_repo_contexts(repos)
+    for repo in repos:
+        data_dir = repo["path"]
+        print(f"\n=== Repo: {repo['name']} ({data_dir}) ===")
+        if not ensure_sync_conf(data_dir):
+            continue
+        setup_repo(data_dir, seen_target_types)
+
+
 def configured_codex(action: str, data_dir: Path | None = None) -> None:
     """Preview, adopt, or detach configured Codex targets without installing a daemon."""
-    from src.main import _build_repo_contexts
+    from src.main import build_repo_contexts
     from src.targets.codex import CodexTarget
     repos = ([{"name": data_dir.name, "path": data_dir.resolve()}]
              if data_dir else load_repos())
-    contexts = _build_repo_contexts(repos)
+    contexts = build_repo_contexts(repos)
     targets = [t for ctx in contexts for t in ctx.targets if isinstance(t, CodexTarget)]
     if not targets:
         raise SystemExit("No Codex targets configured. Add [target:codex] with type = codex first.")

@@ -43,41 +43,24 @@ class FilePair:
 
 
 def ensure_real_file(path: Path, repo_fallback: Path | None) -> bool:
-    """Convert *path* to a real file if it is a symlink.  Idempotent.
+    """Replace a file symlink at *path* with a real copy.  Idempotent.
 
-    Preconditions: *path* may be a symlink, a real file, or absent.
-    Postcondition: *path* is either a real file or absent — never a symlink.
-
-    Behaviour:
-      - Real file or missing: no-op, return False.
-      - Symlink whose target exists: copy target content → replace symlink
-        with real file (shutil.copy2 for mtime preservation). Return True.
-      - Symlink whose target is missing, *repo_fallback* exists: copy
-        fallback → real file at *path*. Return True.
-      - Symlink whose target is missing, no usable fallback: unlink,
-        log warning, return False.  Caller handles absence.
-
-    Never merges content.  Never writes to the repo.
-    Content reconciliation (conflict merge) is Phase 3's job.
+    Copies the link target, or *repo_fallback* when the target is missing.
+    Returns True when a real file was written.  A dangling link with no usable
+    fallback is removed and False returned.  Never merges content and never
+    writes to the repo; content reconciliation is Phase 3's job.
     """
     if not path.is_symlink():
         return False
 
     target = path.resolve()
     if target.exists() and target.is_file():
-        tmp = path.parent / (path.name + ".mesy_tmp")
-        shutil.copy2(target, tmp)
-        path.unlink()
-        tmp.rename(path)
+        _replace_with_copy(path, target)
         log.info("ensure_real_file: materialised symlink -> real file: %s", path.name)
         return True
 
-    # Symlink is dangling (target missing or not a file).
     if repo_fallback is not None and repo_fallback.exists() and repo_fallback.is_file():
-        tmp = path.parent / (path.name + ".mesy_tmp")
-        shutil.copy2(repo_fallback, tmp)
-        path.unlink()
-        tmp.rename(path)
+        _replace_with_copy(path, repo_fallback)
         log.info(
             "ensure_real_file: dangling symlink, restored from fallback: %s", path.name
         )
@@ -91,21 +74,19 @@ def ensure_real_file(path: Path, repo_fallback: Path | None) -> bool:
     return False
 
 
+def _replace_with_copy(path: Path, source: Path) -> None:
+    tmp = path.parent / (path.name + ".mesy_tmp")
+    shutil.copy2(source, tmp)
+    path.unlink()
+    tmp.rename(path)
+
+
 def ensure_real_dir(path: Path, repo_fallback: Path | None) -> bool:
-    """Convert *path* to a real directory if it is a symlink.  Idempotent.
+    """Replace a directory symlink at *path* with a real directory.  Idempotent.
 
-    Preconditions: *path* may be a symlink-to-dir, a real dir, or absent.
-    Postcondition: *path* is a real dir or absent.
-
-    Behaviour:
-      - Real dir or absent: no-op, return False.
-      - Symlink whose target is a dir that exists: create a tmp dir, copy2
-        each non-dir file from target into tmp, unlink the symlink, rename
-        tmp → path.  Return True.
-      - Symlink whose target is missing, *repo_fallback* is an existing dir:
-        same copy from fallback.  Return True.
-      - Symlink whose target is missing, no usable fallback: unlink, log
-        warning, return False.
+    Copies the link target's files, or *repo_fallback*'s when the target is
+    missing.  Returns True when a real directory was written.  A dangling link
+    with no usable fallback is removed and False returned.
 
     Files only — does not recurse into subdirectories (matches the flat-copy
     semantics of the old _copy_dir_files helper).
@@ -115,18 +96,8 @@ def ensure_real_dir(path: Path, repo_fallback: Path | None) -> bool:
     if not path.is_symlink():
         return False
 
-    # Determine the source directory to copy from.
-    source_dir: Path | None = None
-    resolved = path.resolve()
-    if resolved.exists() and resolved.is_dir():
-        source_dir = resolved
-    elif repo_fallback is not None and repo_fallback.exists() and repo_fallback.is_dir():
-        source_dir = repo_fallback
-        log.warning(
-            "ensure_real_dir: symlink target missing for %s, using repo fallback",
-            path.name,
-        )
-    else:
+    source_dir = _real_dir_source(path, repo_fallback)
+    if source_dir is None:
         path.unlink()
         log.warning(
             "ensure_real_dir: dangling symlink with no usable fallback, removed: %s",
@@ -145,3 +116,16 @@ def ensure_real_dir(path: Path, repo_fallback: Path | None) -> bool:
     tmp.rename(path)
     log.info("ensure_real_dir: materialised symlink -> real dir: %s", path.name)
     return True
+
+
+def _real_dir_source(path: Path, repo_fallback: Path | None) -> Path | None:
+    resolved = path.resolve()
+    if resolved.exists() and resolved.is_dir():
+        return resolved
+    if repo_fallback is not None and repo_fallback.exists() and repo_fallback.is_dir():
+        log.warning(
+            "ensure_real_dir: symlink target missing for %s, using repo fallback",
+            path.name,
+        )
+        return repo_fallback
+    return None

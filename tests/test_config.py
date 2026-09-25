@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 import src.config as config_mod
+from src.factory import RepoContext
 from src.config import (
-    RepoContext,
     get_mesy_settings,
     load_config,
     load_project_mappings,

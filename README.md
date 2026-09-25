@@ -126,11 +126,11 @@ Nothing is lost in any conflict, but there are two policies. Which one applies d
 |----------|--------|-------|
 | Copy-mode / migration | Both versions merged into **one file**, wrapped in `<!-- CONFLICT -->` markers, `conflict: true` in frontmatter | The file itself, on both local and repo sides |
 | Codex adoption | Versions kept **separate**, live files untouched | `.mesy-local/codex/<target-id>/conflicts/<fingerprint>/{local,repository}` |
-| Git merge (Codex transport) | Versions kept **separate**, live files untouched | `.mesy-local/git-conflicts/<local>-<remote>/{base,local,remote}` |
+| Git merge (Codex git sync) | Versions kept **separate**, live files untouched | `.mesy-local/git-conflicts/<local>-<remote>/{base,local,remote}` |
 
 The separate-copies policy never writes conflict markers into a live file, which matters because linked files are read directly by the tool.
 
-**A Codex target switches its whole data repo onto the new transport**, including any Claude Code or OpenClaw targets sharing that repo. Those targets keep their copy-mode file policy, but git-level merges then follow the separate-copies row above.
+**A Codex target switches its whole data repo onto the isolated git sync**, including any Claude Code or OpenClaw targets sharing that repo. Those targets keep their copy-mode file policy, but git-level merges then follow the separate-copies row above.
 
 ## Project Name Mapping (Claude Code)
 
