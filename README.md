@@ -36,6 +36,7 @@ A data repo (e.g. `AlfredMemory`) looks like:
 AlfredMemory/
 ├── sync.conf                  # Timing + [target:*] definitions
 ├── claude/
+│   ├── global/CLAUDE.md       # Linked to ~/.claude/CLAUDE.md
 │   ├── projects.conf          # Canonical project name mappings
 │   └── projects/              # Synced Claude Code memory
 │       └── .pending           # Unmapped projects awaiting a mapping
