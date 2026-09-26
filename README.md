@@ -25,7 +25,7 @@ Mesy/                          # This repo — code only, no memory
 ├── setup.py                   # Interactive onboarding (Linux/Windows/WSL)
 ├── repos.conf                 # REQUIRED — list of data repos (gitignored)
 ├── mesy.service               # Systemd unit template
-├── src/                       # Daemon code — see CLAUDE.md for the module map
+├── src/                       # Daemon code
 ├── tests/                     # pytest suite
 └── docs/                      # Design notes, dual-boot setup
 ```

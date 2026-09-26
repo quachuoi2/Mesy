@@ -1,89 +1,26 @@
 # Mesy
 
-Git-backed daemon syncing AI tool memory files across devices via GitHub.
-
-## Quick Reference
-
-| Item | Value |
-|------|-------|
-| Language | Python 3 |
-| Venv | `.venv/` (always activate before running anything) |
-| Entry point | `sync.py` → `src.main` |
-| Repo list | `repos.conf` at repo root — **required**, lists all data repos |
-| Per-repo config | `sync.conf` inside each data repo |
-| Daemon | systemd user service (`mesy.service`) |
+Git-backed daemon syncing AI tool memory files across devices via GitHub. Setup, config, sync modes and conflict rules live in [README.md](README.md) — do not restate them here.
 
 ## Commands
 
 ```bash
-# Activate venv (REQUIRED before pytest or any python command)
-source .venv/bin/activate
-
-# Run tests
-python -m pytest tests/ -v          # full suite
-python -m pytest tests/ -x          # stop on first failure
-python -m pytest tests/test_git_utils.py  # single module
-python -m pytest -k "test_name"     # by name pattern
-
-# Run daemon manually
-python sync.py
+source .venv/bin/activate   # REQUIRED before any python command
+python -m pytest tests/     # never bare `pytest`: it may be a system install without project deps
+python sync.py              # run daemon manually
 ```
-
-**Important:** Do NOT use bare `pytest` — use `python -m pytest` to ensure the venv's pytest is used. `which pytest` may resolve to a system-level pytest that lacks project dependencies.
-
-## Project Structure
-
-Canonical module map. Self-explanatory files (`config.py`, `base.py`, most tests) omitted — the names cover them.
-
-```
-src/
-├── main.py           # Daemon start-up only
-├── factory.py        # RepoContext; builds targets; config checks
-├── cycle.py          # Per repo: scan_repo, commit_repo, pull_repo, first_sync
-├── watch.py          # Watchdog loop
-├── poll.py           # Polling loop (no watchdog installed)
-├── sync_state.py     # Content hashes for copy-mode three-way sync
-├── pending.py        # Unmapped Claude Code projects
-├── git_sync.py       # Commit, rebase-pull, push; conflict markers
-└── targets/
-    ├── claude_code.py   # Maps per-device project names to canonical ones
-    ├── codex.py         # ~/.codex/AGENTS.md + memories/
-    ├── generic.py       # Any flat .md directory
-    ├── _merge.py        # Conflict merge into one file (copy mode)
-    └── _migration.py    # Initial file migration helpers
-```
-
-`SyncTarget` (base.py) owns the shared file and folder sync (`_sync_file`, `_sync_dir`) for both modes; child targets only decide which local/repo pairs to sync. `factory.py` is the only module that knows concrete target classes.
 
 ## Architecture
 
-- **REPO_DIR** = this repo (Mesy code); `repos.conf` lives here at the root
-- **repos.conf** = list of `[repo:<name>]` sections, each with a `path = <data_repo>` key. **Required** — the daemon exits if it is missing or empty
-- Each data repo is an independent git repo (e.g. AlfredMemory) containing its own `sync.conf`
-- `sync.conf` defines `[mesy]` timing settings and `[target:*]` sections; each target syncs files between a `source` (tool's directory) and `repo_dir` (subdir in the data repo)
+- `SyncTarget` (`src/targets/base.py`) owns file/folder sync (`_sync_file`, `_sync_dir`) for both modes; child targets only choose which local/repo pairs to sync
+- `src/factory.py` is the only module that knows concrete target classes
 
-Sync modes, three-way copy rules, and the conflict-policy table live in [README.md](README.md) — do not restate them here.
+## Rules
 
-### Failure behavior
-
-- A failed scan blocks commits for the ENTIRE repo, not just the failing target
-- Pulls continue (one-way sync until fixed)
-- Scan failures log once at ERROR until the message changes; recovery logs at INFO
+- Pure Python, minimal deps (only `watchdog`, optional)
+- All git operations via `subprocess`, not GitPython
+- Offline must not crash: local commits accumulate until push succeeds
+- Must work on Linux and Windows (`Path` objects)
 - Misconfiguration exits non-zero — never `return`, or `Restart=on-failure` leaves the daemon dead
-- Timing intervals must be finite and positive (`nan` would stall the scan forever)
-
-## Coding Rules
-
-- Pure Python, minimal deps (only `watchdog` optional)
-- All git operations via `subprocess` (not GitPython)
-- Handle network failures gracefully (offline = accumulate local commits)
-- Must work on Linux and Windows (use `Path` objects)
-- Mock git and filesystem in tests — never actually commit/push
-
-## Testing Notes
-
-- All fixtures in `conftest.py` — `tmp_repo` patches `REPO_DIR` and `REPOS_CONF_PATH` and returns a tmp data repo dir; `tmp_multi_repo` sets up two independent data repos for multi-repo tests
-- `isolated_sync_state` fixture (autouse) ensures hash state isolation between tests
-- `load_config(data_dir)` and `load_project_mappings(data_dir)` now require an explicit `data_dir`; pass the `tmp_repo` fixture value from tests
-- Test conflict resolution with prepared conflict files
-- Use `tmp_path` for filesystem tests
+- Timing intervals must be finite and positive (`nan` stalls the scan forever)
+- Tests mock git and filesystem — never actually commit/push
