@@ -152,7 +152,7 @@ Logged once at `ERROR` until the message changes, with an `INFO` line on recover
 ```bash
 systemctl --user status mesy
 systemctl --user restart mesy
-journalctl --user -u mesy -f
+tail -f log.log   # in the Mesy folder
 systemctl --user stop mesy
 ```
 

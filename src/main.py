@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from logging.handlers import RotatingFileHandler
 
 from src.config import REPO_DIR, load_repos
 from src.cycle import first_sync
@@ -11,16 +12,21 @@ from src.poll import run_with_polling
 from src.watch import run_with_watchdog
 
 LOG_FMT = "%(asctime)s [%(levelname)s] %(message)s"
-logging.basicConfig(level=logging.INFO, format=LOG_FMT)
 log = logging.getLogger("mesy")
 
 
 def main() -> None:
+    _setup_logging()
     repo_contexts = _load_repo_contexts()
     _log_startup(repo_contexts)
     for ctx in repo_contexts:
         first_sync(ctx)
     _watch(repo_contexts)
+
+
+def _setup_logging() -> None:
+    log_file = RotatingFileHandler(REPO_DIR / "log.log", maxBytes=1_000_000, backupCount=1, encoding="utf-8")
+    logging.basicConfig(level=logging.INFO, format=LOG_FMT, handlers=[log_file])
 
 
 def _load_repo_contexts() -> list[RepoContext]:

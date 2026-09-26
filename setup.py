@@ -12,6 +12,7 @@ own `sync.conf`, and installs the background daemon.
 
 import filecmp
 import fnmatch
+import logging
 import os
 import platform
 import shutil
@@ -739,7 +740,8 @@ def main() -> None:
 def _setup_repos(repos: list[dict]) -> None:
     seen_target_types: set[str] = set()
     # Validate every configured target before any repository is migrated.
-    from src.main import build_repo_contexts
+    from src.main import LOG_FMT, build_repo_contexts
+    logging.basicConfig(level=logging.INFO, format=LOG_FMT)
     build_repo_contexts(repos)
     for repo in repos:
         data_dir = repo["path"]
