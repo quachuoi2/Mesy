@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import filecmp
 import logging
-import shutil
 from pathlib import Path
 
 from src.config import load_project_mappings
-from src.targets._merge import merge_conflicting_file
 from src.pending import add_pending, pending_path, prune_pending
 from src.targets._migration import ProjectPair, ensure_real_dir, ensure_real_file
 from src.targets.base import SyncTarget
@@ -61,12 +58,6 @@ class ClaudeCodeTarget(SyncTarget):
 
     def get_stage_dirs(self) -> list[str]:
         return ["claude/global/", "claude/projects/"]
-
-    def get_watched_paths(self) -> list[Path]:
-        paths = [self.repo_dir, self.repo_base / "claude" / "global"]
-        if self.projects_dir.exists():
-            paths.append(self.projects_dir)
-        return paths
 
     def _migrate_repo_names(self, mapping: dict[str, str]) -> None:
         """Rename raw-named project dirs in the repo to their canonical names."""
@@ -192,107 +183,3 @@ class ClaudeCodeTarget(SyncTarget):
             label=f"CLAUDE.md for {pair.local_claude_md.parent.name}",
         )
         self._sync_dir(pair.local_memory, pair.repo_dir, label=pair.local_claude_md.parent.name)
-
-    def _sync_file(self, local: Path, repo: Path, label: str) -> None:
-        """Reconcile a single file between local and repo per sync_mode."""
-        if self.sync_mode == "copy":
-            self._sync_file_copy(local, repo, label)
-        else:
-            self._sync_file_symlink(local, repo, label)
-
-    def _sync_file_copy(self, local: Path, repo: Path, label: str) -> None:
-        if local.is_file():
-            if not repo.exists():
-                repo.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(local, repo)
-                log.info("Copied %s into repo (copy mode)", label)
-            elif not filecmp.cmp(local, repo, shallow=False):
-                merge_conflicting_file(local=local, repo=repo)
-        elif repo.exists():
-            local.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(repo, local)
-            log.info("Copied %s -> local (copy mode)", label)
-
-    def _sync_file_symlink(self, local: Path, repo: Path, label: str) -> None:
-        # Phase 2 guarantees an existing link is correct, never dangling or wrong.
-        if local.is_symlink():
-            return
-
-        if local.is_file():
-            repo.parent.mkdir(parents=True, exist_ok=True)
-            if not repo.exists():
-                shutil.copy2(local, repo)
-                log.info("Copied %s into repo", label)
-            elif not filecmp.cmp(local, repo, shallow=False):
-                merge_conflicting_file(local=local, repo=repo)
-            local.unlink()
-            local.symlink_to(repo)
-            log.info("Symlinked %s", label)
-        elif repo.exists() and not local.exists():
-            local.symlink_to(repo)
-            log.info("Symlinked %s (from repo)", label)
-
-    def _sync_dir(self, local_memory: Path, repo_dir: Path, label: str) -> None:
-        """Reconcile the memory/ directory between local and repo per sync_mode."""
-        if self.sync_mode == "copy":
-            self._sync_dir_copy(local_memory, repo_dir)
-        else:
-            self._sync_dir_symlink(local_memory, repo_dir, label)
-
-    def _sync_dir_copy(self, local_memory: Path, repo_dir: Path) -> None:
-        local_memory.mkdir(parents=True, exist_ok=True)
-        repo_dir.mkdir(parents=True, exist_ok=True)
-        for f in local_memory.iterdir():
-            if f.is_dir():
-                continue
-            dest = repo_dir / f.name
-            if not dest.exists():
-                shutil.copy2(f, dest)
-            elif not filecmp.cmp(f, dest, shallow=False):
-                merge_conflicting_file(local=f, repo=dest)
-        # Files only in the repo, e.g. from another device.
-        for f in repo_dir.iterdir():
-            if f.is_dir():
-                continue
-            dest = local_memory / f.name
-            if not dest.exists():
-                shutil.copy2(f, dest)
-
-    def _sync_dir_symlink(self, local_memory: Path, repo_dir: Path, label: str) -> None:
-        # Phase 2 guarantees an existing link is correct, never dangling or wrong.
-        if local_memory.is_symlink():
-            return
-
-        if local_memory.is_dir():
-            repo_dir.mkdir(parents=True, exist_ok=True)
-            for f in local_memory.iterdir():
-                if f.is_dir():
-                    continue
-                dest = repo_dir / f.name
-                if not dest.exists():
-                    shutil.copy2(f, dest)
-                    log.info("Copied %s for %s into repo", f.name, label)
-                elif not filecmp.cmp(f, dest, shallow=False):
-                    merge_conflicting_file(local=f, repo=dest)
-
-            if not self._verify_migration(local_memory, repo_dir):
-                log.error("Migration verification failed for %s, skipping rmtree", label)
-                return
-
-            shutil.rmtree(local_memory)
-            local_memory.symlink_to(repo_dir)
-            log.info("Adopted project memory: %s -> %s", label, repo_dir.name)
-
-        elif repo_dir.exists() and not local_memory.exists():
-            local_memory.symlink_to(repo_dir)
-            log.info("Symlinked memory for %s (from repo)", label)
-
-    def _verify_migration(self, source_dir: Path, target_dir: Path) -> bool:
-        """Check that every file in source_dir has a corresponding file in target_dir."""
-        for f in source_dir.iterdir():
-            if f.is_dir():
-                continue
-            if not (target_dir / f.name).exists():
-                return False
-        return True
-

@@ -18,7 +18,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import argparse
 from configparser import ConfigParser
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,8 +56,6 @@ scan_interval_seconds = 60
 # type = codex
 # repo_subdir = codex
 # sync_mode = symlink
-# export_memories = false
-# skills = my-personal-skill
 """
 
 
@@ -605,10 +602,8 @@ def _claim_target(tdef: dict, seen_target_types: set[str]) -> bool:
 
 def _setup_codex(tdef: dict, data_dir: Path) -> None:
     from src.factory import build_targets
-    target = build_targets([tdef], data_dir)[0]
-    for line in target.preview():
-        log("codex", line)
-    target.setup()
+    print(f"--- {tdef['name']} ({data_dir.name}) ---")
+    build_targets([tdef], data_dir)[0].setup()
 
 
 def _setup_generic(tdef: dict, data_dir: Path) -> None:
@@ -754,34 +749,5 @@ def _setup_repos(repos: list[dict]) -> None:
         setup_repo(data_dir, seen_target_types)
 
 
-def configured_codex(action: str, data_dir: Path | None = None) -> None:
-    """Preview, adopt, or detach configured Codex targets without installing a daemon."""
-    from src.main import build_repo_contexts
-    from src.targets.codex import CodexTarget
-    repos = ([{"name": data_dir.name, "path": data_dir.resolve()}]
-             if data_dir else load_repos())
-    contexts = build_repo_contexts(repos)
-    targets = [t for ctx in contexts for t in ctx.targets if isinstance(t, CodexTarget)]
-    if not targets:
-        raise SystemExit("No Codex targets configured. Add [target:codex] with type = codex first.")
-    for target in targets:
-        for line in target.preview():
-            log("codex", line)
-        if action == "adopt":
-            target.setup()
-        elif action == "detach":
-            target.detach()
-            log("info", "Disable the Codex target before restarting Mesy to prevent relinking.")
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--codex", choices=["preview", "adopt", "detach"], help="Manage only configured Codex targets; no Git writes or service installation")
-    parser.add_argument("--data-dir", type=Path, help="Data repo used with --codex")
-    args = parser.parse_args()
-    if args.codex:
-        configured_codex(args.codex, args.data_dir)
-    elif args.data_dir:
-        parser.error("--data-dir requires --codex")
-    else:
-        main()
+    main()

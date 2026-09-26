@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import filecmp
 import logging
+import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
+
+from src.targets._merge import merge_conflicting_file
 
 log = logging.getLogger("mesy")
 
@@ -47,15 +51,105 @@ class SyncTarget(ABC):
         """Detect new files needing symlinks. Called periodically."""
         ...
 
-    def get_source_paths(self) -> list[Path]:
-        """Return local paths whose changes should trigger a sync."""
-        return [self.source]
-
-    def get_watched_paths(self) -> list[Path]:
-        """Return paths that should be watched for changes."""
-        return [self.source, self.repo_dir]
-
     @abstractmethod
     def get_stage_dirs(self) -> list[str]:
         """Return git-add paths relative to data_dir for this target."""
         ...
+
+    def _sync_file(self, local: Path, repo: Path, label: str) -> None:
+        """Reconcile a single file between local and repo per sync_mode."""
+        if self.sync_mode == "copy":
+            self._sync_file_copy(local, repo, label)
+        else:
+            self._sync_file_symlink(local, repo, label)
+
+    def _sync_file_copy(self, local: Path, repo: Path, label: str) -> None:
+        if local.is_file():
+            if not repo.exists():
+                repo.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(local, repo)
+                log.info("Copied %s into repo (copy mode)", label)
+            elif not filecmp.cmp(local, repo, shallow=False):
+                merge_conflicting_file(local=local, repo=repo)
+        elif repo.exists():
+            local.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(repo, local)
+            log.info("Copied %s -> local (copy mode)", label)
+
+    def _sync_file_symlink(self, local: Path, repo: Path, label: str) -> None:
+        if local.is_symlink():
+            return
+
+        if local.is_file():
+            repo.parent.mkdir(parents=True, exist_ok=True)
+            if not repo.exists():
+                shutil.copy2(local, repo)
+                log.info("Copied %s into repo", label)
+            elif not filecmp.cmp(local, repo, shallow=False):
+                merge_conflicting_file(local=local, repo=repo)
+            local.unlink()
+            local.symlink_to(repo)
+            log.info("Symlinked %s", label)
+        elif repo.exists() and not local.exists():
+            local.parent.mkdir(parents=True, exist_ok=True)
+            local.symlink_to(repo)
+            log.info("Symlinked %s (from repo)", label)
+
+    def _sync_dir(self, local: Path, repo: Path, label: str) -> None:
+        """Reconcile a whole directory, subdirectories included, per sync_mode."""
+        if self.sync_mode == "copy":
+            self._sync_dir_copy(local, repo)
+        else:
+            self._sync_dir_symlink(local, repo, label)
+
+    def _sync_dir_copy(self, local: Path, repo: Path) -> None:
+        local.mkdir(parents=True, exist_ok=True)
+        repo.mkdir(parents=True, exist_ok=True)
+        _merge_into(local, repo)
+        _copy_missing(repo, local)
+
+    def _sync_dir_symlink(self, local: Path, repo: Path, label: str) -> None:
+        if local.is_symlink():
+            return
+
+        if local.is_dir():
+            repo.mkdir(parents=True, exist_ok=True)
+            _merge_into(local, repo)
+            if not self._verify_migration(local, repo):
+                log.error("Migration verification failed for %s, skipping rmtree", label)
+                return
+            shutil.rmtree(local)
+            local.symlink_to(repo, target_is_directory=True)
+            log.info("Adopted %s -> %s", label, repo)
+
+        elif repo.exists() and not local.exists():
+            local.parent.mkdir(parents=True, exist_ok=True)
+            local.symlink_to(repo, target_is_directory=True)
+            log.info("Symlinked %s (from repo)", label)
+
+    def _verify_migration(self, source_dir: Path, target_dir: Path) -> bool:
+        """Check that every file in source_dir has a corresponding file in target_dir."""
+        return all((target_dir / f.relative_to(source_dir)).exists() for f in _files(source_dir))
+
+
+def _files(root: Path) -> list[Path]:
+    return [f for f in root.rglob("*") if f.is_file()]
+
+
+def _merge_into(src: Path, dst: Path) -> None:
+    """Copy files missing from dst; merge files that differ."""
+    for f in _files(src):
+        dest = dst / f.relative_to(src)
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dest)
+        elif not filecmp.cmp(f, dest, shallow=False):
+            merge_conflicting_file(local=f, repo=dest)
+
+
+def _copy_missing(src: Path, dst: Path) -> None:
+    for f in _files(src):
+        dest = dst / f.relative_to(src)
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dest)

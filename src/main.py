@@ -7,7 +7,8 @@ import logging
 from src.config import REPO_DIR, load_repos
 from src.cycle import first_sync
 from src.factory import RepoContext, build_repo_contexts
-from src.watch import run_with_polling, run_with_watchdog
+from src.poll import run_with_polling
+from src.watch import run_with_watchdog
 
 LOG_FMT = "%(asctime)s [%(levelname)s] %(message)s"
 logging.basicConfig(level=logging.INFO, format=LOG_FMT)

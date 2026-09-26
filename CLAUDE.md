@@ -38,29 +38,22 @@ Canonical module map. Self-explanatory files (`config.py`, `base.py`, most tests
 ```
 src/
 ├── main.py           # Daemon start-up only
-├── factory.py        # RepoContext; builds targets + git sync; config checks
+├── factory.py        # RepoContext; builds targets; config checks
 ├── cycle.py          # Per repo: scan_repo, commit_repo, pull_repo, first_sync
-├── watch.py          # Watchdog loop, polling loop, change detection
-├── links.py          # Verified symlink adoption, backups, conflict capture
+├── watch.py          # Watchdog loop
+├── poll.py           # Polling loop (no watchdog installed)
 ├── sync_state.py     # Content hashes for copy-mode three-way sync
 ├── pending.py        # Unmapped Claude Code projects
-├── git_sync/
-│   ├── base.py          # GitSync interface
-│   ├── legacy.py        # LegacyGitSync — merges in the live worktree
-│   └── isolated.py      # IsolatedGitSync — merges in a detached worktree
+├── git_sync.py       # Commit, rebase-pull, push; conflict markers
 └── targets/
     ├── claude_code.py   # Maps per-device project names to canonical ones
-    ├── codex.py         # Symlink only, optional memory exports
+    ├── codex.py         # ~/.codex/AGENTS.md + memories/
     ├── generic.py       # Any flat .md directory
     ├── _merge.py        # Conflict merge into one file (copy mode)
     └── _migration.py    # Initial file migration helpers
-
-tests/
-├── test_transport.py              # Isolated git sync decisions, git mocked
-└── test_transport_integration.py  # Isolated git sync against real local git repos
 ```
 
-Two git syncs coexist: a repo containing a Codex target uses `IsolatedGitSync` for **all** its targets. `factory.py` is the only module that knows concrete target classes.
+`SyncTarget` (base.py) owns the shared file and folder sync (`_sync_file`, `_sync_dir`) for both modes; child targets only decide which local/repo pairs to sync. `factory.py` is the only module that knows concrete target classes.
 
 ## Architecture
 
@@ -69,14 +62,12 @@ Two git syncs coexist: a repo containing a Codex target uses `IsolatedGitSync` f
 - Each data repo is an independent git repo (e.g. AlfredMemory) containing its own `sync.conf`
 - `sync.conf` defines `[mesy]` timing settings and `[target:*]` sections; each target syncs files between a `source` (tool's directory) and `repo_dir` (subdir in the data repo)
 
-Sync modes, three-way copy rules, and the conflict-policy table live in [README.md](README.md) — do not restate them here. Codex specifics are in [docs/CODEX_SYNC.md](docs/CODEX_SYNC.md).
-
-**Before touching conflict code:** there are two policies, not one. Copy-mode merges both versions into a single file; Codex adoption and Codex-repo git merges keep versions as separate copies and never write markers into live files. See the README table.
+Sync modes, three-way copy rules, and the conflict-policy table live in [README.md](README.md) — do not restate them here.
 
 ### Failure behavior
 
 - A failed scan blocks commits for the ENTIRE repo, not just the failing target
-- Codex repos also stop pulling; legacy repos keep pulling (one-way sync until fixed)
+- Pulls continue (one-way sync until fixed)
 - Scan failures log once at ERROR until the message changes; recovery logs at INFO
 - Misconfiguration exits non-zero — never `return`, or `Restart=on-failure` leaves the daemon dead
 - Timing intervals must be finite and positive (`nan` would stall the scan forever)

@@ -29,24 +29,3 @@ class TestSyncTargetABC:
 
         with pytest.raises(TypeError):
             IncompleteTarget(name="incomplete", source=Path("/tmp"), repo_dir=Path("/tmp/repo"))
-
-    def test_get_watched_paths_default(self, tmp_path):
-        """get_watched_paths() returns [source, repo_dir] by default."""
-
-        class ConcreteTarget(SyncTarget):
-            def setup(self):
-                pass
-
-            def scan(self):
-                pass
-
-            def get_stage_dirs(self):
-                return ["test/"]
-
-        source = tmp_path / "source"
-        repo_dir = tmp_path / "repo"
-        target = ConcreteTarget(name="test", source=source, repo_dir=repo_dir)
-
-        watched = target.get_watched_paths()
-        assert source in watched
-        assert repo_dir in watched

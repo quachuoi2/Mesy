@@ -8,7 +8,7 @@ from unittest.mock import call, patch
 
 import pytest
 
-from src.git_sync.legacy import (
+from src.git_sync import (
     commit_and_push,
     has_local_changes,
     pull_remote,
@@ -28,7 +28,7 @@ class TestGitHelper:
 
         monkeypatch.setattr("subprocess.run", fake_run)
 
-        from src.git_sync.legacy import git
+        from src.git_sync import git
         git("status", "--porcelain", data_dir=tmp_repo)
 
         assert captured[0][0] == "git"
@@ -47,7 +47,7 @@ class TestGitHelper:
 
         monkeypatch.setattr("subprocess.run", fake_run)
 
-        from src.git_sync.legacy import git
+        from src.git_sync import git
         git("log", data_dir=tmp_repo)
 
         assert kwargs_captured.get("timeout") == 30
@@ -353,15 +353,15 @@ class TestCurrentBranch:
     """Legacy transport must follow the checked-out branch, like the Codex transport."""
 
     def test_derives_checked_out_branch(self, monkeypatch):
-        from src.git_sync.legacy import current_branch
+        from src.git_sync import current_branch
 
-        monkeypatch.setattr("src.git_sync.legacy.git",
+        monkeypatch.setattr("src.git_sync.git",
                             lambda *a, **kw: subprocess.CompletedProcess(a, 0, "memory-sync\n", ""))
         assert current_branch(Path("/tmp")) == "memory-sync"
 
     def test_falls_back_to_main_on_detached_head(self, monkeypatch):
-        from src.git_sync.legacy import current_branch
+        from src.git_sync import current_branch
 
-        monkeypatch.setattr("src.git_sync.legacy.git",
+        monkeypatch.setattr("src.git_sync.git",
                             lambda *a, **kw: subprocess.CompletedProcess(a, 128, "", "fatal"))
         assert current_branch(Path("/tmp")) == "main"

@@ -96,9 +96,15 @@ repo_subdir = openclaw/main
 file_patterns = *.md
 exclude = TOOLS.md, HEARTBEAT.md, .openclaw/
 sync_mode = copy
+
+[target:codex]
+type = codex                          # source defaults to $CODEX_HOME, else ~/.codex
+repo_subdir = codex
 ```
 
-Defaults if omitted: `debounce_seconds = 30`, both intervals `60`, `file_patterns = *.md`, `sync_mode = symlink`. Polling mode (no `watchdog`) ticks at the smallest of the three intervals, floored at 1s.
+The Codex target syncs `~/.codex/AGENTS.md` with `codex/AGENTS.md` and the whole `~/.codex/memories/` folder with `codex/memories/`. Project `AGENTS.md` files stay in their own repositories.
+
+Defaults if omitted: `debounce_seconds = 30`, both intervals `60`, `file_patterns = *.md`, `sync_mode = symlink`. Polling mode (no `watchdog`) ticks at the smallest `debounce_seconds` across repos, floored at 60s.
 
 All three intervals must be finite positive numbers. A missing, zero, negative, non-numeric, `nan`, or `inf` value is a configuration error: the daemon logs it and exits non-zero rather than starting in a broken state.
 
@@ -120,17 +126,7 @@ Copy mode stores a content hash after each sync (`src/sync_state.py`) and compar
 
 ## Conflicts
 
-Nothing is lost in any conflict, but there are two policies. Which one applies depends on the target — and, for git-level conflicts, on whether the data repo contains a Codex target.
-
-| Conflict | Policy | Where |
-|----------|--------|-------|
-| Copy-mode / migration | Both versions merged into **one file**, wrapped in `<!-- CONFLICT -->` markers, `conflict: true` in frontmatter | The file itself, on both local and repo sides |
-| Codex adoption | Versions kept **separate**, live files untouched | `.mesy-local/codex/<target-id>/conflicts/<fingerprint>/{local,repository}` |
-| Git merge (Codex git sync) | Versions kept **separate**, live files untouched | `.mesy-local/git-conflicts/<local>-<remote>/{base,local,remote}` |
-
-The separate-copies policy never writes conflict markers into a live file, which matters because linked files are read directly by the tool.
-
-**A Codex target switches its whole data repo onto the isolated git sync**, including any Claude Code or OpenClaw targets sharing that repo. Those targets keep their copy-mode file policy, but git-level merges then follow the separate-copies row above.
+Nothing is lost in a conflict. Both versions are merged into **one file**, wrapped in `<!-- CONFLICT -->` markers, with `conflict: true` in the frontmatter. This applies to copy-mode and migration conflicts (both sides of the file) and to git rebase conflicts.
 
 ## Project Name Mapping (Claude Code)
 
@@ -145,7 +141,7 @@ Unmapped projects are recorded in `<data_repo>/claude/projects/.pending` — a s
 
 ## When a Target Fails
 
-A failed scan (usually an unresolved conflict) **blocks commits for every target in that data repo**, not just the failing one — it avoids committing a half-synced state. Pulls stop too in repos with a Codex target; legacy repos keep pulling, so they sync one-way until you fix it.
+A failed scan (usually an unresolved conflict) **blocks commits for every target in that data repo**, not just the failing one — it avoids committing a half-synced state. Pulls continue, so the repo syncs one-way until you fix it.
 
 Logged once at `ERROR` until the message changes, with an `INFO` line on recovery. Resolve the conflict and wait for the next scan — no restart needed.
 
@@ -196,14 +192,3 @@ See [docs/DUAL_BOOT_SETUP.md](docs/DUAL_BOOT_SETUP.md) for path matching and sys
 
 - **Phase 2**: Alfred gains a `MemoryManager` reading/writing the data repos directly
 - **Phase 4**: The daemon becomes an Alfred module; clients push memory via Alfred's API instead of git
-
-## Codex
-
-Mesy supports symlink-based synchronization of Codex's global `AGENTS.md`, shared
-notes, and selected personal skills. Optional per-device exports make generated
-memories available as reference material without sharing native databases.
-
-See [Codex setup and recovery](docs/CODEX_SYNC.md) and the
-[example target configuration](examples/codex-sync.conf). Start with
-`python setup.py --codex preview --data-dir /path/to/data-repo` after adding the
-target to that repository's `sync.conf`.

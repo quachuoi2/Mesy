@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.factory import build_targets, get_all_stage_dirs
-from src.watch import get_md_mtimes
+from src.poll import get_md_mtimes
 from src.targets.claude_code import ClaudeCodeTarget
 from src.targets.generic import GenericTarget
 
@@ -362,7 +362,7 @@ class TestRunWithWatchdog:
 class TestRunWithPolling:
     def test_polls_on_mtime_changes(self, tmp_multi_repo, monkeypatch):
         """run_with_polling() detects .md file changes and calls commit_and_push."""
-        from src.watch import run_with_polling
+        from src.poll import run_with_polling
         from src.factory import RepoContext
 
         settings = {
@@ -381,8 +381,8 @@ class TestRunWithPolling:
 
         commit_mock = MagicMock()
         pull_mock = MagicMock()
-        monkeypatch.setattr("src.git_sync.legacy.commit_and_push", commit_mock)
-        monkeypatch.setattr("src.git_sync.legacy.pull_remote", pull_mock)
+        monkeypatch.setattr("src.git_sync.commit_and_push", commit_mock)
+        monkeypatch.setattr("src.git_sync.pull_remote", pull_mock)
 
         # Mock get_md_mtimes to simulate a change on the second call
         call_count = [0]
@@ -399,7 +399,7 @@ class TestRunWithPolling:
             else:
                 return modified_mtimes
 
-        monkeypatch.setattr("src.watch.get_md_mtimes", fake_get_md_mtimes)
+        monkeypatch.setattr("src.poll.get_md_mtimes", fake_get_md_mtimes)
 
         sleep_count = [0]
 
@@ -409,7 +409,7 @@ class TestRunWithPolling:
                 # Exit after two sleep calls (initialization + first check + exit)
                 raise KeyboardInterrupt()
 
-        monkeypatch.setattr("src.watch.time.sleep", fake_sleep)
+        monkeypatch.setattr("src.poll.time.sleep", fake_sleep)
 
         run_with_polling([ctx])
 
@@ -418,7 +418,7 @@ class TestRunWithPolling:
 
     def test_handles_keyboard_interrupt_cleanly(self, tmp_multi_repo, monkeypatch):
         """run_with_polling() exits gracefully on KeyboardInterrupt."""
-        from src.watch import run_with_polling
+        from src.poll import run_with_polling
         from src.factory import RepoContext
 
         settings = {
@@ -438,14 +438,14 @@ class TestRunWithPolling:
         def fake_sleep(duration):
             raise KeyboardInterrupt()
 
-        monkeypatch.setattr("src.watch.time.sleep", fake_sleep)
+        monkeypatch.setattr("src.poll.time.sleep", fake_sleep)
 
         # Should not raise
         run_with_polling([ctx])
 
     def test_per_repo_pull_interval_respected(self, tmp_multi_repo, monkeypatch):
         """run_with_polling() uses each ctx's own pull_interval_seconds, not the global."""
-        from src.watch import run_with_polling
+        from src.poll import run_with_polling
         from src.factory import RepoContext
 
         # repo_a has a very short pull interval; repo_b has a very long one.
@@ -465,9 +465,9 @@ class TestRunWithPolling:
         )
 
         pull_mock = MagicMock()
-        monkeypatch.setattr("src.git_sync.legacy.pull_remote", pull_mock)
-        monkeypatch.setattr("src.git_sync.legacy.commit_and_push", MagicMock())
-        monkeypatch.setattr("src.watch.get_md_mtimes", lambda data_dir=None: {})
+        monkeypatch.setattr("src.git_sync.pull_remote", pull_mock)
+        monkeypatch.setattr("src.git_sync.commit_and_push", MagicMock())
+        monkeypatch.setattr("src.poll.get_md_mtimes", lambda data_dir=None: {})
 
         # Advance time between init and loop tick so pull checks fire.
         call_count = [0]
@@ -487,8 +487,8 @@ class TestRunWithPolling:
             if sleep_count[0] >= 2:
                 raise KeyboardInterrupt()
 
-        monkeypatch.setattr("src.watch.time.sleep", fake_sleep)
-        monkeypatch.setattr("src.watch.time.time", fake_time)
+        monkeypatch.setattr("src.poll.time.sleep", fake_sleep)
+        monkeypatch.setattr("src.poll.time.time", fake_time)
 
         run_with_polling([ctx_a, ctx_b])
 
@@ -518,8 +518,8 @@ class TestMain:
         push_mock = MagicMock()
         scan_mock = MagicMock()
 
-        monkeypatch.setattr("src.git_sync.legacy.pull_remote", pull_mock)
-        monkeypatch.setattr("src.git_sync.legacy.commit_and_push", push_mock)
+        monkeypatch.setattr("src.git_sync.pull_remote", pull_mock)
+        monkeypatch.setattr("src.git_sync.commit_and_push", push_mock)
 
         # Prevent the daemon loop from starting after initial sync
         import src.factory as factory_mod
@@ -571,8 +571,8 @@ class TestMain:
         # Mock git operations
         pull_mock = MagicMock()
         push_mock = MagicMock()
-        monkeypatch.setattr("src.git_sync.legacy.pull_remote", pull_mock)
-        monkeypatch.setattr("src.git_sync.legacy.commit_and_push", push_mock)
+        monkeypatch.setattr("src.git_sync.pull_remote", pull_mock)
+        monkeypatch.setattr("src.git_sync.commit_and_push", push_mock)
 
         # Patch load_repos to return our test repos
         monkeypatch.setattr(

@@ -107,9 +107,7 @@ def _parse_target(cfg: ConfigParser, section: str) -> dict:
         target_def["mapping_conf"] = cfg.get(section, "mapping_conf")
     target_def["file_patterns"] = _list_option(cfg, section, "file_patterns", ["*.md"])
     target_def["exclude"] = _list_option(cfg, section, "exclude", [])
-    target_def["sync_mode"] = _sync_mode(cfg, section, name, target_def["type"])
-    if target_def["type"] == "codex":
-        target_def.update(_codex_options(cfg, section))
+    target_def["sync_mode"] = _sync_mode(cfg, section, name)
     return target_def
 
 
@@ -137,10 +135,8 @@ def _list_option(cfg: ConfigParser, section: str, option: str, default: list[str
     return [item.strip() for item in cfg.get(section, option).split(",")]
 
 
-def _sync_mode(cfg: ConfigParser, section: str, name: str, target_type: str) -> str:
+def _sync_mode(cfg: ConfigParser, section: str, name: str) -> str:
     sync_mode = cfg.get(section, "sync_mode", fallback="symlink").strip()
-    if target_type == "codex" and sync_mode != "symlink":
-        raise ValueError(f"[{section}] Codex requires sync_mode = symlink")
     valid_sync_modes = {"symlink", "copy"}
     if sync_mode not in valid_sync_modes:
         log.warning(
@@ -151,13 +147,3 @@ def _sync_mode(cfg: ConfigParser, section: str, name: str, target_type: str) -> 
         )
         sync_mode = "symlink"
     return sync_mode
-
-
-def _codex_options(cfg: ConfigParser, section: str) -> dict:
-    return {
-        "skills": [s.strip() for s in cfg.get(section, "skills", fallback="").split(",") if s.strip()],
-        "skills_source": Path(cfg.get(section, "skills_source", fallback="~/.agents/skills")).expanduser(),
-        "export_memories": cfg.getboolean(section, "export_memories", fallback=False),
-        "device_id": cfg.get(section, "device_id", fallback=None),
-        "export_settle_seconds": cfg.getfloat(section, "export_settle_seconds", fallback=2),
-    }

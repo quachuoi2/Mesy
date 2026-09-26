@@ -6,20 +6,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.git_sync.base import GitSync
-
 log = logging.getLogger("mesy")
-
-
-class LegacyGitSync(GitSync):
-    """Commits, rebases and pulls directly in the live worktree."""
-
-    def push(self, data_dir: Path, stage_dirs: list[str]) -> bool:
-        commit_and_push(stage_dirs, data_dir=data_dir)
-        return False
-
-    def pull(self, data_dir: Path) -> None:
-        pull_remote(data_dir=data_dir)
 
 
 def git(*args: str, data_dir: Path, check: bool = False) -> subprocess.CompletedProcess:
@@ -34,7 +21,6 @@ def has_local_changes(data_dir: Path) -> bool:
 
 
 def current_branch(data_dir: Path) -> str:
-    """Branch to sync with, matching the isolated git sync. Falls back to 'main'."""
     result = git("symbolic-ref", "--short", "HEAD", data_dir=data_dir)
     return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else "main"
 

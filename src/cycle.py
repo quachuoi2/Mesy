@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 
+from src import git_sync
 from src.factory import RepoContext
 from src.targets.base import SyncTarget
 
@@ -36,26 +37,16 @@ def _scan_target(ctx: RepoContext, target: SyncTarget) -> bool:
 
 
 def pull_repo(ctx: RepoContext) -> None:
-    if ctx.git_sync.isolated:
-        # This also retries committed-but-unpushed work without new filesystem events.
-        if scan_repo(ctx):
-            commit_repo(ctx)
-    else:
-        _pull_alone(ctx)
-
-
-def first_sync(ctx: RepoContext) -> None:
-    _pull_alone(ctx)
-    if scan_repo(ctx):
-        commit_repo(ctx)
-
-
-def _pull_alone(ctx: RepoContext) -> None:
     try:
-        ctx.git_sync.pull(ctx.data_dir)
+        git_sync.pull_remote(data_dir=ctx.data_dir)
     except (OSError, subprocess.TimeoutExpired) as exc:
         log.warning("[%s] Pull deferred: %s", ctx.name, exc)
 
+
+def first_sync(ctx: RepoContext) -> None:
+    pull_repo(ctx)
+    if scan_repo(ctx):
+        commit_repo(ctx)
 
 def scan_repo(ctx: RepoContext) -> bool:
     results = [_scan_target(ctx, target) for target in ctx.targets]
@@ -64,7 +55,15 @@ def scan_repo(ctx: RepoContext) -> bool:
 
 def commit_repo(ctx: RepoContext) -> None:
     try:
-        if ctx.git_sync.push(ctx.data_dir, ctx.stage_dirs):
-            scan_repo(ctx)
+        git_sync.commit_and_push(ctx.stage_dirs, data_dir=ctx.data_dir)
     except (OSError, subprocess.TimeoutExpired) as exc:
         log.warning("[%s] Git operation deferred: %s", ctx.name, exc)
+
+
+def run_intervals(ctx: RepoContext, now: float, last_pull: dict[str, float], last_scan: dict[str, float]) -> None:
+    if (now - last_pull[ctx.name]) > float(ctx.settings["pull_interval_seconds"]):
+        last_pull[ctx.name] = now
+        pull_repo(ctx)
+    if now - last_scan[ctx.name] > float(ctx.settings["scan_interval_seconds"]):
+        last_scan[ctx.name] = now
+        scan_repo(ctx)
