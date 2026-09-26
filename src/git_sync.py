@@ -35,13 +35,9 @@ def commit_and_push(stage_dirs: list[str], data_dir: Path) -> None:
     if not _commit(stage_dirs, data_dir):
         return
 
-    branch = current_branch(data_dir)
-    pull_result = git("pull", "--rebase", "origin", branch, data_dir=data_dir)
-    if pull_result.returncode != 0:
-        log.warning("pull --rebase failed, attempting conflict resolution")
-        resolve_conflicts(data_dir)
+    pull_remote(data_dir)
 
-    push_result = git("push", "origin", branch, data_dir=data_dir)
+    push_result = git("push", "origin", current_branch(data_dir), data_dir=data_dir)
     if push_result.returncode != 0:
         log.warning("push failed (offline?): %s", push_result.stderr)
 
@@ -143,9 +139,11 @@ def _flag_conflict(text: str) -> str:
 
 
 def pull_remote(data_dir: Path) -> None:
-    """Pull remote changes (fast-forward or rebase)."""
+    """Pull remote changes with rebase; resolve conflicts if the rebase stops."""
     result = git("pull", "--rebase", "origin", current_branch(data_dir), data_dir=data_dir)
-    if result.returncode == 0 and "Already up to date" not in result.stdout:
-        log.info("Pulled remote changes")
-    elif result.returncode != 0:
-        log.debug("pull failed (offline?): %s", result.stderr)
+    if result.returncode == 0:
+        if "Already up to date" not in result.stdout:
+            log.info("Pulled remote changes")
+        return
+    log.debug("pull failed (offline?), attempting conflict resolution: %s", result.stderr)
+    resolve_conflicts(data_dir)

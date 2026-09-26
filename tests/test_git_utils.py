@@ -275,6 +275,26 @@ class TestPullRemote:
 
         assert any("pull failed" in r.message for r in caplog.records)
 
+    def test_resolves_conflicts_on_failure(self, tmp_repo, monkeypatch):
+        """pull_remote() resolves conflicts instead of leaving the rebase stuck."""
+        conflicted_file = tmp_repo / "claude" / "global" / "conflict.md"
+        conflicted_file.write_text("<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> abc\n")
+        commands = []
+
+        def fake_run(cmd, **kw):
+            commands.append(cmd)
+            if "pull" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "", "CONFLICT")
+            if "--diff-filter=U" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, "claude/global/conflict.md", "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+        pull_remote(data_dir=tmp_repo)
+
+        assert "<<<<<<<" not in conflicted_file.read_text()
+        assert ["rebase", "--continue"] in [c[3:] for c in commands]
+
 
 class TestSplitFrontmatter:
     def test_parses_frontmatter(self):
