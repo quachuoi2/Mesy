@@ -358,6 +358,34 @@ class TestRunWithWatchdog:
         mock_observer.stop.assert_called_once()
         mock_observer.join.assert_called_once()
 
+    def test_rename_onto_md_file_counts_as_change(self, tmp_multi_repo, monkeypatch):
+        """A save that writes a temp file and renames it onto a .md file marks the repo changed."""
+        pytest.importorskip("watchdog")
+        from types import SimpleNamespace
+        from src.watch import run_with_watchdog
+        from src.factory import RepoContext
+
+        observer = MagicMock()
+        monkeypatch.setattr("src.watch.Observer", lambda: observer)
+
+        def stop(_):
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr("src.watch.time.sleep", stop)
+        repo = tmp_multi_repo["repo_a"]
+        ctx = RepoContext(name="repo-a", data_dir=repo, settings={
+            "debounce_seconds": "30", "pull_interval_seconds": "60", "scan_interval_seconds": "60",
+        })
+        run_with_watchdog([ctx])
+
+        handler = observer.schedule.call_args.args[0]
+        clock = MagicMock(return_value=100.0)
+        monkeypatch.setattr("src.watch.time.time", clock)
+        handler.on_any_event(SimpleNamespace(
+            is_directory=False, src_path=str(repo / ".notes.tmp"), dest_path=str(repo / "notes.md"),
+        ))
+        clock.assert_called_once()
+
 
 class TestRunWithPolling:
     def test_polls_on_mtime_changes(self, tmp_multi_repo, monkeypatch):

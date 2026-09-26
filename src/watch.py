@@ -29,7 +29,9 @@ def run_with_watchdog(repo_contexts: list[RepoContext]) -> None:
         def on_any_event(self, event):
             if event.is_directory:
                 return
-            if event.src_path.endswith(".md") and ".git" not in event.src_path:
+            # A save that writes a temp file and renames it reports the .md name in dest_path.
+            paths = (event.src_path, getattr(event, "dest_path", ""))
+            if any(path.endswith(".md") and ".git" not in path for path in paths):
                 last_change[self._repo_name] = time.time()
 
     observer = Observer()
