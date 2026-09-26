@@ -26,6 +26,7 @@ from pathlib import Path
 from src.config import load_project_mappings, load_repos, load_config, load_targets
 from src.pending import add_pending
 from src.targets._merge import split_frontmatter
+from src.targets.base import all_copied, merge_into
 
 REPO_DIR = Path(__file__).resolve().parent
 REPOS_CONF_PATH = REPO_DIR / "repos.conf"
@@ -374,8 +375,8 @@ def make_symlink(link: Path, target: Path) -> None:
     if _already_linked(link, target, str(link)):
         return
 
-    if link.is_dir():
-        _move_dir_into_repo(link, target)
+    if link.is_dir() and not _move_dir_into_repo(link, target):
+        return
 
     link.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(parents=True, exist_ok=True)
@@ -397,21 +398,16 @@ def make_symlink(link: Path, target: Path) -> None:
         log("ok", f"Symlinked {link.name}")
 
 
-def _move_dir_into_repo(link: Path, target: Path) -> None:
+def _move_dir_into_repo(link: Path, target: Path) -> bool:
+    """Copy a folder, subfolders included, into the repo; delete it only if every file arrived."""
     log("migrate", f"Moving existing memory from {link}")
     target.mkdir(parents=True, exist_ok=True)
-    for f in link.iterdir():
-        if f.is_dir():
-            continue
-        dest = target / f.name
-        if not dest.exists():
-            shutil.copy2(f, dest)
-            log("migrate", f"  copied {f.name}")
-        elif not filecmp.cmp(f, dest, shallow=False):
-            merge_conflicting_file(local=f, repo=dest)
-        else:
-            log("ok", f"  {f.name} identical, skipping")
+    merge_into(link, target)
+    if not all_copied(link, target):
+        log("error", f"Not every file reached {target}; leaving {link} in place")
+        return False
     shutil.rmtree(link)
+    return True
 
 
 # ---------------------------------------------------------------------------

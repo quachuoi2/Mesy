@@ -274,3 +274,29 @@ def test_setup_repo_skips_duplicate_target_types(tmp_path, monkeypatch, capsys):
     assert calls == [data_dir]
     out = capsys.readouterr().out
     assert "already handled by an earlier repo" in out
+
+
+def test_make_symlink_keeps_subfolders(tmp_path):
+    link = tmp_path / "memory"
+    (link / "sub").mkdir(parents=True)
+    (link / "top.md").write_text("top")
+    (link / "sub" / "deep.md").write_text("deep")
+    target = tmp_path / "repo" / "memory"
+
+    setup.make_symlink(link, target)
+
+    assert link.is_symlink()
+    assert (target / "top.md").read_text() == "top"
+    assert (target / "sub" / "deep.md").read_text() == "deep"
+
+
+def test_make_symlink_keeps_folder_when_copy_incomplete(tmp_path, monkeypatch):
+    link = tmp_path / "memory"
+    link.mkdir()
+    (link / "notes.md").write_text("notes")
+    monkeypatch.setattr(setup, "all_copied", lambda src, dst: False)
+
+    setup.make_symlink(link, tmp_path / "repo" / "memory")
+
+    assert not link.is_symlink()
+    assert (link / "notes.md").read_text() == "notes"

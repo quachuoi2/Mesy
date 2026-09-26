@@ -105,7 +105,7 @@ class SyncTarget(ABC):
     def _sync_dir_copy(self, local: Path, repo: Path) -> None:
         local.mkdir(parents=True, exist_ok=True)
         repo.mkdir(parents=True, exist_ok=True)
-        _merge_into(local, repo)
+        merge_into(local, repo)
         _copy_missing(repo, local)
 
     def _sync_dir_symlink(self, local: Path, repo: Path, label: str) -> None:
@@ -114,7 +114,7 @@ class SyncTarget(ABC):
 
         if local.is_dir():
             repo.mkdir(parents=True, exist_ok=True)
-            _merge_into(local, repo)
+            merge_into(local, repo)
             if not self._verify_migration(local, repo):
                 log.error("Migration verification failed for %s, skipping rmtree", label)
                 return
@@ -129,15 +129,15 @@ class SyncTarget(ABC):
 
     def _verify_migration(self, source_dir: Path, target_dir: Path) -> bool:
         """Check that every file in source_dir has a corresponding file in target_dir."""
-        return all((target_dir / f.relative_to(source_dir)).exists() for f in _files(source_dir))
+        return all_copied(source_dir, target_dir)
 
 
 def _files(root: Path) -> list[Path]:
     return [f for f in root.rglob("*") if f.is_file()]
 
 
-def _merge_into(src: Path, dst: Path) -> None:
-    """Copy files missing from dst; merge files that differ."""
+def merge_into(src: Path, dst: Path) -> None:
+    """Copy files missing from dst; merge files that differ. Subfolders included."""
     for f in _files(src):
         dest = dst / f.relative_to(src)
         if not dest.exists():
@@ -145,6 +145,11 @@ def _merge_into(src: Path, dst: Path) -> None:
             shutil.copy2(f, dest)
         elif not filecmp.cmp(f, dest, shallow=False):
             merge_conflicting_file(local=f, repo=dest)
+
+
+def all_copied(src: Path, dst: Path) -> bool:
+    """True when every file under src also exists under dst."""
+    return all((dst / f.relative_to(src)).exists() for f in _files(src))
 
 
 def _copy_missing(src: Path, dst: Path) -> None:
