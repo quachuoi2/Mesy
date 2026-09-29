@@ -290,6 +290,20 @@ def test_make_symlink_keeps_subfolders(tmp_path):
     assert (target / "sub" / "deep.md").read_text() == "deep"
 
 
+def test_setup_claude_code_symlinks_links_rules(tmp_path, monkeypatch):
+    claude_dir = tmp_path / ".claude"
+    (claude_dir / "rules").mkdir(parents=True)
+    (claude_dir / "rules" / "code.md").write_text("# Code")
+    monkeypatch.setattr(setup, "CLAUDE_DIR", claude_dir)
+    data_dir = tmp_path / "AlfredMemory"
+
+    setup.setup_claude_code_symlinks(data_dir)
+
+    repo_rules = data_dir / "claude" / "global" / "rules"
+    assert (claude_dir / "rules").is_symlink()
+    assert (repo_rules / "code.md").read_text() == "# Code"
+
+
 def test_make_symlink_keeps_folder_when_copy_incomplete(tmp_path, monkeypatch):
     link = tmp_path / "memory"
     link.mkdir()

@@ -1,4 +1,4 @@
-"""Claude Code sync target — project mapping, CLAUDE.md sync, three-phase model."""
+"""Claude Code sync target — project mapping, CLAUDE.md and rules/ sync, three-phase model."""
 
 from __future__ import annotations
 
@@ -162,17 +162,17 @@ class ClaudeCodeTarget(SyncTarget):
             )
 
     def _sync(self, pairs: list[ProjectPair]) -> None:
-        """Sync global CLAUDE.md then each project pair."""
-        self._sync_global_claude_md()
+        """Sync global CLAUDE.md and rules/, then each project pair."""
+        self._sync_global()
         for pair in pairs:
             self._sync_project(pair)
 
-    def _sync_global_claude_md(self) -> None:
-        """Sync the global ~/.claude/CLAUDE.md against the repo."""
-        local_claude = self.claude_dir / "CLAUDE.md"
-        repo_claude = self.repo_base / "claude" / "global" / "CLAUDE.md"
-        repo_claude.parent.mkdir(parents=True, exist_ok=True)
-        self._sync_file(local_claude, repo_claude, label="global CLAUDE.md")
+    def _sync_global(self) -> None:
+        """Sync ~/.claude/CLAUDE.md and ~/.claude/rules/ against the repo."""
+        global_dir = self.repo_base / "claude" / "global"
+        global_dir.mkdir(parents=True, exist_ok=True)
+        self._sync_file(self.claude_dir / "CLAUDE.md", global_dir / "CLAUDE.md", label="global CLAUDE.md")
+        self._sync_dir(self.claude_dir / "rules", global_dir / "rules", label="global rules")
 
     def _sync_project(self, pair: ProjectPair) -> None:
         """Sync a single mapped project's CLAUDE.md and memory/ dir."""

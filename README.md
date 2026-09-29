@@ -37,6 +37,7 @@ AlfredMemory/
 ├── sync.conf                  # Timing + [target:*] definitions
 ├── claude/
 │   ├── global/CLAUDE.md       # Linked to ~/.claude/CLAUDE.md
+│   ├── global/rules/          # Linked to ~/.claude/rules/
 │   ├── projects.conf          # Canonical project name mappings
 │   └── projects/              # Synced Claude Code memory
 │       └── .pending           # Unmapped projects awaiting a mapping

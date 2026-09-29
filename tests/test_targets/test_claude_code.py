@@ -72,6 +72,50 @@ class TestSyncGlobalClaudeMd:
         assert local_claude.is_symlink()
 
 
+class TestSyncGlobalRules:
+    def test_adopts_local_rules_into_repo(self, claude_env, monkeypatch):
+        local_rules = claude_env["claude_dir"] / "rules"
+        (local_rules / "sub").mkdir(parents=True)
+        (local_rules / "code.md").write_text("# Code")
+        (local_rules / "sub" / "deep.md").write_text("# Deep")
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+
+        make_target(claude_env).scan()
+
+        repo_rules = claude_env["repo"] / "claude" / "global" / "rules"
+        assert (repo_rules / "code.md").read_text() == "# Code"
+        assert (repo_rules / "sub" / "deep.md").read_text() == "# Deep"
+        assert local_rules.is_symlink()
+        assert local_rules.resolve() == repo_rules.resolve()
+
+    def test_links_repo_rules_when_no_local(self, claude_env, monkeypatch):
+        repo_rules = claude_env["repo"] / "claude" / "global" / "rules"
+        repo_rules.mkdir(parents=True)
+        (repo_rules / "code.md").write_text("# Code")
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+
+        make_target(claude_env).scan()
+
+        local_rules = claude_env["claude_dir"] / "rules"
+        assert local_rules.is_symlink()
+        assert (local_rules / "code.md").read_text() == "# Code"
+
+    def test_copy_mode_syncs_both_ways(self, claude_env, monkeypatch):
+        local_rules = claude_env["claude_dir"] / "rules"
+        local_rules.mkdir()
+        (local_rules / "local.md").write_text("# Local")
+        repo_rules = claude_env["repo"] / "claude" / "global" / "rules"
+        repo_rules.mkdir(parents=True)
+        (repo_rules / "repo.md").write_text("# Repo")
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+
+        make_copy_target(claude_env).scan()
+
+        assert not local_rules.is_symlink()
+        assert (repo_rules / "local.md").read_text() == "# Local"
+        assert (local_rules / "repo.md").read_text() == "# Repo"
+
+
 class TestScanProjects:
     def test_adopts_mapped_project(self, claude_env, monkeypatch):
         """scan() migrates memory to canonical dir and creates symlink for a mapped project."""
@@ -179,7 +223,7 @@ def make_copy_target(claude_env) -> ClaudeCodeTarget:
 
 class TestCopyModeGlobalClaudeMd:
     def test_copy_mode_syncs_local_to_repo(self, claude_env, monkeypatch):
-        """copy mode: _sync_global_claude_md copies local to repo without symlinking."""
+        """copy mode: _sync_global copies local to repo without symlinking."""
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         local_claude = claude_env["claude_dir"] / "CLAUDE.md"
         local_claude.write_text("# Global Config")
@@ -192,7 +236,7 @@ class TestCopyModeGlobalClaudeMd:
         assert not local_claude.is_symlink()
 
     def test_copy_mode_syncs_repo_to_local(self, claude_env, monkeypatch):
-        """copy mode: _sync_global_claude_md copies repo to local when local missing."""
+        """copy mode: _sync_global copies repo to local when local missing."""
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         repo_claude = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
         repo_claude.write_text("# Repo Config")

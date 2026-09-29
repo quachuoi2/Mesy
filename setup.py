@@ -438,8 +438,9 @@ def migrate_repo_to_canonical(data_dir: Path, mapping: dict[str, str]) -> None:
 
 
 def setup_claude_code_symlinks(data_dir: Path) -> None:
-    """Symlink the global CLAUDE.md and each project's memory for one data repo."""
+    """Symlink the global CLAUDE.md, rules/ and each project's memory for one data repo."""
     make_file_symlink(CLAUDE_DIR / "CLAUDE.md", data_dir / "claude" / "global" / "CLAUDE.md")
+    make_symlink(CLAUDE_DIR / "rules", data_dir / "claude" / "global" / "rules")
 
     mapping = load_project_mappings(data_dir)
     migrate_repo_to_canonical(data_dir, mapping)
