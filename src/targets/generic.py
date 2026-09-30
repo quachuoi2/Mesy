@@ -43,7 +43,7 @@ class GenericTarget(SyncTarget):
 
         if self.sync_mode == "copy":
             self._sync_state = SyncState(
-                hash_file=self.repo_base / ".mesy_sync_hashes.json"
+                hash_file_path=self.repo_base / ".mesy_sync_hashes.json"
             )
         else:
             self._sync_state = None
@@ -77,7 +77,7 @@ class GenericTarget(SyncTarget):
         if self._sync_state is None:
             return
 
-        last_mode = self._sync_state.get_hash(_LAST_SYNC_MODE_KEY)
+        last_mode = self._sync_state.get_raw(_LAST_SYNC_MODE_KEY)
         if last_mode is not None and last_mode != self.sync_mode:
             log.info(
                 "[%s] sync_mode changed from %s to %s — invalidating stale hashes",

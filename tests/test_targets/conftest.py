@@ -19,13 +19,13 @@ def isolated_sync_state(tmp_path, monkeypatch):
     _hashes dict of the fixture's state.  This way, any hash written by a target's
     _sync_state is immediately visible via isolated_sync_state.get_hash().
     """
-    fresh_state = SyncState(hash_file=tmp_path / ".mesy_sync_hashes.json")
+    fresh_state = SyncState(hash_file_path=tmp_path / ".mesy_sync_hashes.json")
 
     original_init = SyncState.__init__
 
-    def patched_init(self_inner, hash_file: Path) -> None:
+    def patched_init(self_inner, hash_file_path: Path) -> None:
         # Point every new SyncState at the same backing file as the fixture state.
-        original_init(self_inner, hash_file=fresh_state._path)
+        original_init(self_inner, hash_file_path=fresh_state._hash_file_path)
         # Share the same in-memory dict so writes by any instance are visible to
         # the fixture object immediately (without needing to reload from disk).
         self_inner._hashes = fresh_state._hashes

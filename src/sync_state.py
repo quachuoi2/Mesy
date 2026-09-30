@@ -13,27 +13,27 @@ log = logging.getLogger("mesy")
 class SyncState:
     """Persist content hashes so three-way sync can tell who changed a file."""
 
-    def __init__(self, hash_file: Path) -> None:
-        self._path = hash_file
+    def __init__(self, hash_file_path: Path) -> None:
+        self._hash_file_path = hash_file_path
         self._hashes: dict[str, str] = {}
 
         self.load()
 
     def load(self) -> None:
-        if self._path.exists():
+        if self._hash_file_path.exists():
             try:
-                self._hashes = json.loads(self._path.read_text())
+                self._hashes = json.loads(self._hash_file_path.read_text())
 
             except (json.JSONDecodeError, OSError) as exc:
-                log.warning("Could not load sync hashes from %s: %s", self._path, exc)
+                log.warning("Could not load sync hashes from %s: %s", self._hash_file_path, exc)
                 self._hashes = {}
 
     def save(self) -> None:
         try:
-            self._path.write_text(json.dumps(self._hashes, indent=2))
+            self._hash_file_path.write_text(json.dumps(self._hashes, indent=2))
 
         except OSError as exc:
-            log.warning("Could not save sync hashes to %s: %s", self._path, exc)
+            log.warning("Could not save sync hashes to %s: %s", self._hash_file_path, exc)
 
     def compute_hash(self, content: str) -> str:
         return hashlib.sha256(content.encode()).hexdigest()
@@ -53,6 +53,9 @@ class SyncState:
         """
         self._hashes[key] = value
         self.save()
+
+    def get_raw(self, key: str) -> str | None:
+        return self._hashes.get(key)
 
     def clear_target_hashes(self, exclude_keys: set[str] | None = None) -> None:
         """Remove all content hashes except those in *exclude_keys*.
