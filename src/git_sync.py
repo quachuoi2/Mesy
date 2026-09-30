@@ -5,6 +5,7 @@ import socket
 import subprocess
 from pathlib import Path
 
+from src.conflict import conflict_marker, flag_conflict
 from src.timestamp import now_iso
 
 GIT_TIMEOUT_SECONDS = 30
@@ -109,7 +110,7 @@ def _resolve_file(repo_base: Path, filepath: str) -> None:
     if "<<<<<<<" not in content:
         return
 
-    full_path.write_text(_flag_conflict(_replace_markers(content)))
+    full_path.write_text(flag_conflict(_replace_markers(content)))
     git("add", filepath, repo_base=repo_base)
 
 
@@ -122,24 +123,15 @@ def _replace_markers(content: str) -> str:
     for line in content.split("\n"):
         if line.startswith("<<<<<<<"):
             in_conflict = True
-            resolved.append(f"<!-- CONFLICT ({now}): local ({hostname}) version -->")
+            resolved.append(conflict_marker(now, f"local ({hostname})"))
         elif line.startswith("=======") and in_conflict:
-            resolved.append(f"\n<!-- CONFLICT ({now}): remote version -->")
+            resolved.append(f"\n{conflict_marker(now, 'remote')}")
         elif line.startswith(">>>>>>>") and in_conflict:
             in_conflict = False
         else:
             resolved.append(line)
 
     return "\n".join(resolved)
-
-
-def _flag_conflict(text: str) -> str:
-    if text.startswith("---\n"):
-        parts = text.split("---\n", 2)
-        if len(parts) >= 3:
-            return f"---\nconflict: true\n{parts[1]}---\n{parts[2]}"
-
-    return text
 
 
 def pull_remote(repo_base: Path) -> None:

@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from src.config import DEFAULT_FILE_PATTERNS, DEFAULT_SYNC_MODE
-from src.targets._merge import merge_conflicting_file
+from src.conflict import merge_conflicting_file
 
 log = logging.getLogger("mesy")
 

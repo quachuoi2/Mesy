@@ -31,7 +31,7 @@ from src.config import (
 )
 from src.git_sync import DEFAULT_BRANCH, git
 from src.pending import add_pending
-from src.targets._merge import merge_conflicting_file
+from src.conflict import merge_conflicting_file
 from src.targets.base import all_copied, merge_into
 from src.targets.claude_code import CLAUDE_DIR, migrate_repo_names
 from src.targets.generic import is_excluded, matches_patterns

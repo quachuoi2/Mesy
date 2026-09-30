@@ -14,7 +14,7 @@ from src.git_sync import (
     pull_remote,
     resolve_conflicts,
 )
-from src.targets._merge import merge_conflicting_file, split_frontmatter
+from src.conflict import merge_conflicting_file, split_frontmatter
 
 
 class TestGitHelper:
@@ -231,6 +231,22 @@ class TestResolveConflicts:
         assert "local content" in content
         assert "remote content" in content
         assert "conflict: true" in content
+
+    def test_adds_frontmatter_when_file_has_none(self, tmp_repo, monkeypatch):
+        """resolve_conflicts() flags a conflicted file that had no frontmatter, like CLAUDE.md."""
+        conflicted_file = tmp_repo / "claude" / "global" / "CLAUDE.md"
+        conflicted_file.write_text("<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> abc\n")
+
+        def fake_run(cmd, **kw):
+            if "diff" in cmd and "--diff-filter=U" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, "claude/global/CLAUDE.md", "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        resolve_conflicts(repo_base=tmp_repo)
+
+        assert conflicted_file.read_text().startswith("---\nconflict: true\n---\n")
 
     def test_calls_rebase_continue_after_resolution(self, tmp_repo, monkeypatch):
         """resolve_conflicts() calls rebase --continue after resolving files."""

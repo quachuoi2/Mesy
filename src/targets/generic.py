@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 
 from src.config import DEFAULT_SYNC_MODE
-from src.targets._merge import merge_conflicting_file
+from src.conflict import merge_conflicting_file
 from src.sync_state import SyncState
 from src.targets._migration import FilePair, ensure_real_file
 from src.targets.base import SyncTarget

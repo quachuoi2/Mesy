@@ -5,7 +5,7 @@ Checked against the code on branch `refactor` at `aea9c94`, 2026-09-26.
 | # | Bug | Where | Hits today? |
 |---|---|---|---|
 | 1 | Copy mode makes a conflict out of every one-sided edit (Claude Code, Codex) | `src/targets/base.py` `_sync_file_copy`, `_sync_dir_copy` | Only in copy mode; fix is in `stash@{0}` |
-| 2 | Conflict merge breaks nested frontmatter and drops repo values | `src/targets/_merge.py:11-34` | Yes, on any memory-file conflict |
+| 2 | Conflict merge breaks nested frontmatter and drops repo values | `src/conflict.py` `split_frontmatter`, `merge_conflicting_file` | Yes, on any memory-file conflict |
 | 3 | Rebase conflict labels are swapped | `src/git_sync.py:124-128` | Yes, on any rebase conflict |
 | 4 | Rebase conflict in a file without frontmatter gets no `conflict: true` | `src/git_sync.py` `_flag_conflict` | Yes, e.g. `CLAUDE.md`, `AGENTS.md` |
 | 5 | Two copy-mode generic targets in one data repo erase each other's hashes | `src/targets/generic.py:42-46`, `src/sync_state.py` | No (one copy target per repo today) |
