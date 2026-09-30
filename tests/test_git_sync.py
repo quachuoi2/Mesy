@@ -1,4 +1,4 @@
-"""Tests for mesy/git_utils.py — git operations and conflict resolution."""
+"""Tests for src/git_sync.py — git operations and conflict resolution."""
 
 from __future__ import annotations
 
@@ -386,7 +386,7 @@ class TestMergeConflictingFile:
 
 
 class TestCurrentBranch:
-    """Legacy transport must follow the checked-out branch, like the Codex transport."""
+    """current_branch() must follow the checked-out branch, not assume main."""
 
     def test_derives_checked_out_branch(self, monkeypatch):
         from src.git_sync import current_branch

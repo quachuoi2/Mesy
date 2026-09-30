@@ -1,4 +1,4 @@
-"""Tests for mesy/targets/claude_code.py — project discovery, mapping, pending, CLAUDE.md sync."""
+"""Tests for src/targets/claude_code.py — project discovery, mapping, pending, CLAUDE.md sync."""
 
 from __future__ import annotations
 

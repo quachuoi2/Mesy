@@ -2,8 +2,9 @@
 
 import logging
 import socket
-from datetime import datetime, timezone
 from pathlib import Path
+
+from src.timestamp import now_iso
 
 log = logging.getLogger("mesy")
 
@@ -29,7 +30,7 @@ def split_frontmatter(text: str) -> tuple[str, dict]:
 def merge_conflicting_file(local: Path, repo: Path) -> None:
     """Merge two differing files by keeping both versions with conflict markers."""
     hostname = socket.gethostname()
-    now = datetime.now(timezone.utc).isoformat()
+    now = now_iso()
 
     local_body, local_frontmatter = split_frontmatter(local.read_text())
     repo_body, repo_frontmatter = split_frontmatter(repo.read_text())

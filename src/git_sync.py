@@ -3,8 +3,9 @@
 import logging
 import socket
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
+
+from src.timestamp import now_iso
 
 log = logging.getLogger("mesy")
 
@@ -65,7 +66,7 @@ def _commit(stage_dirs: list[str], repo_base: Path) -> bool:
 
 def _commit_message(repo_base: Path) -> str:
     hostname = socket.gethostname()
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = now_iso()
 
     name_status = git("diff", "--cached", "--name-status", repo_base=repo_base)
     changed_lines = []
@@ -112,7 +113,7 @@ def _resolve_file(repo_base: Path, filepath: str) -> None:
 
 def _replace_markers(content: str) -> str:
     hostname = socket.gethostname()
-    now = datetime.now(timezone.utc).isoformat()
+    now = now_iso()
     resolved = []
     in_conflict = False
 

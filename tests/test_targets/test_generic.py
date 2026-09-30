@@ -1,4 +1,4 @@
-"""Tests for mesy/targets/generic.py — setup, scan, adopt_directory, stage dirs."""
+"""Tests for src/targets/generic.py — setup, scan, adopt_directory, stage dirs."""
 
 from __future__ import annotations
 

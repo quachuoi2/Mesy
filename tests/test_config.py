@@ -1,4 +1,4 @@
-"""Tests for mesy/config.py — config loading and target parsing."""
+"""Tests for src/config.py — config loading and target parsing."""
 
 from __future__ import annotations
 

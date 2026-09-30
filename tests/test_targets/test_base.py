@@ -1,4 +1,4 @@
-"""Tests for mesy/targets/base.py — ABC enforcement."""
+"""Tests for src/targets/base.py — ABC enforcement."""
 
 from __future__ import annotations
 

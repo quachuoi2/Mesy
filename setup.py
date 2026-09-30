@@ -20,13 +20,13 @@ import socket
 import subprocess
 import sys
 from configparser import ConfigParser
-from datetime import datetime, timezone
 from pathlib import Path
 
 from src.config import load_project_mappings, load_repos, load_sync_cfg, load_targets
 from src.pending import add_pending
 from src.targets._merge import split_frontmatter
 from src.targets.base import all_copied, merge_into
+from src.timestamp import now_iso
 
 MESY_DIR = Path(__file__).resolve().parent
 REPOS_CFG_PATH = MESY_DIR / "repos.ini"
@@ -135,22 +135,22 @@ def _init_with_remote(repo_base: Path, url: str) -> None:
         log("error", "git remote add failed")
         return
 
-    fetch = _git(repo_base, "fetch", "origin")
-    if fetch.returncode != 0:
-        log("warn", f"git fetch failed: {fetch.stderr.strip()} — leaving repo initialized")
+    fetch_result = _git(repo_base, "fetch", "origin")
+    if fetch_result.returncode != 0:
+        log("warn", f"git fetch failed: {fetch_result.stderr.strip()} — leaving repo initialized")
         return
 
-    head = _git(repo_base, "symbolic-ref", "refs/remotes/origin/HEAD")
-    if head.returncode == 0 and head.stdout.strip():
-        branch = head.stdout.strip().rsplit("/", 1)[-1]
+    head_result = _git(repo_base, "symbolic-ref", "refs/remotes/origin/HEAD")
+    if head_result.returncode == 0 and head_result.stdout.strip():
+        branch = head_result.stdout.strip().rsplit("/", 1)[-1]
     else:
         branch = "main"
 
     _git(repo_base, "checkout", "-b", branch)
 
-    pull = _git(repo_base, "pull", "origin", branch, "--allow-unrelated-histories")
-    if pull.returncode != 0:
-        log("warn", f"git pull failed: {pull.stderr.strip()}")
+    pull_result = _git(repo_base, "pull", "origin", branch, "--allow-unrelated-histories")
+    if pull_result.returncode != 0:
+        log("warn", f"git pull failed: {pull_result.stderr.strip()}")
         return
 
     _git(repo_base, "branch", f"--set-upstream-to=origin/{branch}", branch)
@@ -308,7 +308,7 @@ def load_sync_cfg_targets(repo_base: Path) -> list[dict]:
 def merge_conflicting_file(local: Path, repo: Path) -> None:
     """Merge two differing files by keeping both versions with conflict markers."""
     hostname = socket.gethostname()
-    now = datetime.now(timezone.utc).isoformat()
+    now = now_iso()
 
     local_content = local.read_text()
     repo_content = repo.read_text()
@@ -526,7 +526,7 @@ def _adopt_dir(src: Path, dest: Path, name: str, file_patterns: list[str], exclu
     dest.mkdir(parents=True, exist_ok=True)
 
     for item in sorted(src.iterdir()):
-        if any(fnmatch.fnmatch(item.name, pattern.rstrip("/")) for pattern in exclude):
+        if any(fnmatch.fnmatch(item.name, pat.rstrip("/")) for pat in exclude):
             log("skip", f"  [{name}] Excluded: {item.name}")
             continue
 
@@ -771,9 +771,9 @@ def _setup_repos(repos: list[dict]) -> None:
     build_repo_ctxs(repos)
 
     seen_target_types: set[str] = set()
-    for repo in repos:
-        repo_base = repo["path"]
-        print(f"\n=== Repo: {repo['name']} ({repo_base}) ===")
+    for repo_def in repos:
+        repo_base = repo_def["path"]
+        print(f"\n=== Repo: {repo_def['name']} ({repo_base}) ===")
         if not ensure_sync_cfg(repo_base):
             continue
 

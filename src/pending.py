@@ -3,7 +3,7 @@
 Format (single file at ``<repo>/claude/projects/.pending``):
 
     source: <hostname>
-    discovered: <iso-utc>
+    discovered: <iso-utc+7>
 
     Add a mapping in projects.ini:
       [YourProjectName]
@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import re
 import socket
-from datetime import datetime, timezone
 from pathlib import Path
+
+from src.timestamp import now_iso
 
 PENDING_RELATIVE = Path("claude") / "projects" / ".pending"
 
@@ -66,7 +67,7 @@ def _rewrite(path: Path, raw_names: list[str]) -> None:
     path.write_text(_render(
         raw_names,
         hostname=socket.gethostname(),
-        now_iso=datetime.now(timezone.utc).isoformat(),
+        now_iso=now_iso(),
     ))
 
 

@@ -1,271 +1,10 @@
-"""Tests for mesy/main.py — target building, stage dir collection, modified-time scanning, main()."""
+"""Tests for src/main.py — run loop, main() and startup exit status."""
 
 from __future__ import annotations
 
-import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
-from src.factory import build_targets, get_all_stage_dirs
-from src.detectors.poll import get_md_modified_times
-from src.targets.claude_code import ClaudeCodeTarget
-from src.targets.generic import GenericTarget
-
-
-class TestBuildTargets:
-    def test_claude_code_type_produces_claude_code_target(self, tmp_repo):
-        """build_targets() creates a ClaudeCodeTarget for type='claude-code'."""
-        target_def = {
-            "name": "claude-code",
-            "type": "claude-code",
-            "source": Path("/tmp/src"),
-            "repo_subdir": "claude/projects",
-        }
-        targets = build_targets([target_def], repo_base=tmp_repo)
-        assert len(targets) == 1
-        assert isinstance(targets[0], ClaudeCodeTarget)
-
-    def test_generic_type_produces_generic_target(self, tmp_repo):
-        """build_targets() creates a GenericTarget for type='generic'."""
-        target_def = {
-            "name": "openclaw",
-            "type": "generic",
-            "source": Path("/tmp/src"),
-            "repo_subdir": "openclaw/main",
-            "file_patterns": ["*.md"],
-            "exclude": [],
-        }
-        targets = build_targets([target_def], repo_base=tmp_repo)
-        assert len(targets) == 1
-        assert isinstance(targets[0], GenericTarget)
-        assert targets[0].name == "openclaw"
-
-    def test_generic_target_inherits_file_patterns_and_exclude(self, tmp_repo):
-        """build_targets() passes file_patterns and exclude through to GenericTarget."""
-        target_def = {
-            "name": "openclaw",
-            "type": "generic",
-            "source": Path("/tmp/src"),
-            "repo_subdir": "openclaw/main",
-            "file_patterns": ["*.md", "*.txt"],
-            "exclude": ["secret.md"],
-        }
-        targets = build_targets([target_def], repo_base=tmp_repo)
-        assert targets[0].file_patterns == ["*.md", "*.txt"]
-        assert targets[0].exclude == ["secret.md"]
-
-    def test_unknown_type_emits_warning(self, tmp_repo, caplog):
-        """build_targets() logs a warning for unrecognised target types."""
-        import logging
-        target_def = {
-            "name": "mystery",
-            "type": "not-a-real-type",
-            "source": Path("/tmp/src"),
-            "repo_subdir": "mystery",
-        }
-        with caplog.at_level(logging.WARNING, logger="mesy"):
-            targets = build_targets([target_def], repo_base=tmp_repo)
-        assert targets == []
-        assert "Unknown target type" in caplog.text
-
-    def test_mixed_target_defs_build_correct_types(self, tmp_repo):
-        """build_targets() handles a list with both claude-code and generic entries."""
-        tdefs = [
-            {
-                "name": "claude-code",
-                "type": "claude-code",
-                "source": Path("/tmp/claude"),
-                "repo_subdir": "claude/projects",
-            },
-            {
-                "name": "openclaw",
-                "type": "generic",
-                "source": Path("/tmp/openclaw"),
-                "repo_subdir": "openclaw/main",
-                "file_patterns": ["*.md"],
-                "exclude": [],
-            },
-        ]
-        targets = build_targets(tdefs, repo_base=tmp_repo)
-        assert len(targets) == 2
-        assert isinstance(targets[0], ClaudeCodeTarget)
-        assert isinstance(targets[1], GenericTarget)
-
-
-class TestGetAllStageDirs:
-    def test_deduplicates_identical_dirs_across_targets(self, tmp_repo):
-        """get_all_stage_dirs() returns unique dirs even when targets share them."""
-        t1 = MagicMock()
-        t1.get_stage_dirs.return_value = ["claude/projects/", "claude/global/"]
-        t2 = MagicMock()
-        t2.get_stage_dirs.return_value = ["claude/projects/"]  # duplicate
-
-        result = get_all_stage_dirs([t1, t2])
-        assert result == ["claude/projects/", "claude/global/"]
-
-    def test_preserves_order_of_first_occurrence(self, tmp_repo):
-        """get_all_stage_dirs() preserves insertion order, deduplicating on first seen."""
-        t1 = MagicMock()
-        t1.get_stage_dirs.return_value = ["a/", "b/"]
-        t2 = MagicMock()
-        t2.get_stage_dirs.return_value = ["b/", "c/"]
-
-        result = get_all_stage_dirs([t1, t2])
-        assert result == ["a/", "b/", "c/"]
-
-    def test_empty_target_list_returns_empty(self, tmp_repo):
-        """get_all_stage_dirs() returns empty list for no targets."""
-        assert get_all_stage_dirs([]) == []
-
-
-class TestGetMdModifiedTimes:
-    def test_finds_md_files_in_repo(self, tmp_repo):
-        """get_md_modified_times() returns last-modified times for all .md files in MESY_DIR."""
-        (tmp_repo / "notes.md").write_text("# Notes")
-        (tmp_repo / "claude" / "global" / "CLAUDE.md").write_text("# Global")
-
-        result = get_md_modified_times(tmp_repo)
-
-        assert any("notes.md" in k for k in result)
-        assert any("CLAUDE.md" in k for k in result)
-
-    def test_skips_dotgit_directory(self, tmp_repo):
-        """get_md_modified_times() does not include files under .git/."""
-        git_dir = tmp_repo / ".git" / "COMMIT_EDITMSG"
-        git_dir.parent.mkdir(parents=True, exist_ok=True)
-        git_dir.write_text("init")
-
-        # Put a .md file inside .git to confirm exclusion
-        (tmp_repo / ".git" / "hidden.md").write_text("should be ignored")
-        (tmp_repo / "visible.md").write_text("should appear")
-
-        result = get_md_modified_times(tmp_repo)
-
-        assert not any(".git" in k for k in result)
-        assert any("visible.md" in k for k in result)
-
-    def test_skips_non_md_files(self, tmp_repo):
-        """get_md_modified_times() ignores .txt and other non-.md files."""
-        (tmp_repo / "readme.txt").write_text("text file")
-        (tmp_repo / "data.md").write_text("# Data")
-
-        result = get_md_modified_times(tmp_repo)
-
-        assert not any("readme.txt" in k for k in result)
-        assert any("data.md" in k for k in result)
-
-
-class TestBuildRepoCtxs:
-    def test_builds_single_repo_context(self, tmp_multi_repo, monkeypatch):
-        """build_repo_ctxs() creates a RepoCtx for each repo in the list."""
-        from src.factory import build_repo_ctxs
-
-        sync_cfg_text = (
-            "[target:generic]\n"
-            f"source = {tmp_multi_repo['repo_a'] / 'openclaw' / 'main'}\n"
-            "repo_subdir = openclaw/main\n"
-            "sync_mode = copy\n"
-        )
-        (tmp_multi_repo["repo_a"] / "sync.ini").write_text(sync_cfg_text)
-
-        repo_list = [{"name": "repo-a", "path": tmp_multi_repo["repo_a"]}]
-        contexts = build_repo_ctxs(repo_list)
-
-        assert len(contexts) == 1
-        assert contexts[0].name == "repo-a"
-        assert contexts[0].repo_base == tmp_multi_repo["repo_a"]
-        assert len(contexts[0].targets) == 1
-        assert len(contexts[0].stage_dirs) > 0
-
-    def test_builds_multiple_repo_ctxs(self, tmp_multi_repo, monkeypatch):
-        """build_repo_ctxs() handles multiple repos with independent configs."""
-        from src.factory import build_repo_ctxs
-
-        for repo_name, repo_path in [
-            ("repo-a", tmp_multi_repo["repo_a"]),
-            ("repo-b", tmp_multi_repo["repo_b"]),
-        ]:
-            sync_cfg_text = (
-                "[target:generic]\n"
-                f"source = {repo_path / 'openclaw' / 'main'}\n"
-                "repo_subdir = openclaw/main\n"
-            )
-            (repo_path / "sync.ini").write_text(sync_cfg_text)
-
-        repo_list = [
-            {"name": "repo-a", "path": tmp_multi_repo["repo_a"]},
-            {"name": "repo-b", "path": tmp_multi_repo["repo_b"]},
-        ]
-        contexts = build_repo_ctxs(repo_list)
-
-        assert len(contexts) == 2
-        assert contexts[0].name == "repo-a"
-        assert contexts[1].name == "repo-b"
-        assert contexts[0].repo_base == tmp_multi_repo["repo_a"]
-        assert contexts[1].repo_base == tmp_multi_repo["repo_b"]
-
-    def test_preserves_target_order(self, tmp_multi_repo):
-        """build_repo_ctxs() preserves the order of repos."""
-        from src.factory import build_repo_ctxs
-
-        sync_cfg_text = (
-            "[target:generic]\n"
-            f"source = {tmp_multi_repo['repo_a'] / 'openclaw' / 'main'}\n"
-            "repo_subdir = openclaw/main\n"
-        )
-        (tmp_multi_repo["repo_a"] / "sync.ini").write_text(sync_cfg_text)
-
-        repo_list = [{"name": "repo-a", "path": tmp_multi_repo["repo_a"]}]
-        contexts = build_repo_ctxs(repo_list)
-
-        assert contexts[0].name == "repo-a"
-
-    def test_settings_populated_per_repo_from_sync_cfg(self, tmp_multi_repo):
-        """build_repo_ctxs() populates repo_ctx.settings independently per repo."""
-        from src.factory import build_repo_ctxs
-
-        (tmp_multi_repo["repo_a"] / "sync.ini").write_text(
-            "[mesy]\ndebounce_seconds = 10\npull_interval_seconds = 120\n"
-            "[target:generic]\n"
-            f"source = {tmp_multi_repo['repo_a'] / 'openclaw' / 'main'}\n"
-            "repo_subdir = openclaw/main\n"
-        )
-        (tmp_multi_repo["repo_b"] / "sync.ini").write_text(
-            "[mesy]\ndebounce_seconds = 45\npull_interval_seconds = 300\n"
-            "[target:generic]\n"
-            f"source = {tmp_multi_repo['repo_b'] / 'openclaw' / 'main'}\n"
-            "repo_subdir = openclaw/main\n"
-        )
-
-        contexts = build_repo_ctxs([
-            {"name": "repo-a", "path": tmp_multi_repo["repo_a"]},
-            {"name": "repo-b", "path": tmp_multi_repo["repo_b"]},
-        ])
-
-        assert contexts[0].settings["debounce_seconds"] == "10"
-        assert contexts[0].settings["pull_interval_seconds"] == "120"
-        assert contexts[1].settings["debounce_seconds"] == "45"
-        assert contexts[1].settings["pull_interval_seconds"] == "300"
-
-    def test_settings_defaults_when_no_sync_cfg(self, tmp_multi_repo):
-        """build_repo_ctxs() uses config defaults when sync.ini has no [mesy] section."""
-        from src.factory import build_repo_ctxs
-
-        (tmp_multi_repo["repo_a"] / "sync.ini").write_text(
-            "[target:generic]\n"
-            f"source = {tmp_multi_repo['repo_a'] / 'openclaw' / 'main'}\n"
-            "repo_subdir = openclaw/main\n"
-        )
-
-        contexts = build_repo_ctxs([{"name": "repo-a", "path": tmp_multi_repo["repo_a"]}])
-
-        assert contexts[0].settings["debounce_seconds"] == "30"
-        assert contexts[0].settings["pull_interval_seconds"] == "60"
-
-
-SETTINGS = {"debounce_seconds": "30", "pull_interval_seconds": "60", "scan_interval_seconds": "60"}
 
 
 def _interrupt_after_sleeps(sleeps_before_stop: int):
@@ -279,83 +18,8 @@ def _interrupt_after_sleeps(sleeps_before_stop: int):
     return fake_sleep
 
 
-class TestWatchdogDetector:
-    def _start(self, repo_ctxs, monkeypatch):
-        pytest.importorskip("watchdog")
-        from src.detectors.watch import WatchdogDetector
-
-        observer = MagicMock()
-        monkeypatch.setattr("src.detectors.watch.Observer", lambda: observer)
-        monkeypatch.setattr("src.detectors.watch.time.time", lambda: 100.0)
-        detector = WatchdogDetector()
-        detector.start(repo_ctxs)
-        return detector, observer
-
-    def test_schedules_observer_for_each_repo(self, tmp_multi_repo, monkeypatch):
-        """start() schedules one watch per data repo and starts the observer."""
-        from src.factory import RepoCtx
-
-        ctx_a = RepoCtx(name="repo-a", repo_base=tmp_multi_repo["repo_a"], settings=SETTINGS)
-        ctx_b = RepoCtx(name="repo-b", repo_base=tmp_multi_repo["repo_b"], settings=SETTINGS)
-
-        _, observer = self._start([ctx_a, ctx_b], monkeypatch)
-
-        assert observer.schedule.call_count == 2
-        observer.start.assert_called_once()
-
-    def test_changed_waits_for_debounce_and_reports_once(self, tmp_multi_repo, monkeypatch):
-        """changed() is True once the repo has been quiet for debounce_seconds, then resets."""
-        from types import SimpleNamespace
-        from src.factory import RepoCtx
-
-        repo = tmp_multi_repo["repo_a"]
-        repo_ctx = RepoCtx(name="repo-a", repo_base=repo, settings=SETTINGS)
-        detector, observer = self._start([repo_ctx], monkeypatch)
-        handler = observer.schedule.call_args.args[0]
-
-        handler.on_any_event(SimpleNamespace(is_directory=False, src_path=str(repo / "notes.md")))
-
-        assert not detector.changed(repo_ctx, 120.0)
-        assert detector.changed(repo_ctx, 131.0)
-        assert not detector.changed(repo_ctx, 200.0)
-
-    def test_rename_onto_md_file_counts_as_change(self, tmp_multi_repo, monkeypatch):
-        """A save that writes a temp file and renames it onto a .md file marks the repo changed."""
-        from types import SimpleNamespace
-        from src.factory import RepoCtx
-
-        repo = tmp_multi_repo["repo_a"]
-        repo_ctx = RepoCtx(name="repo-a", repo_base=repo, settings=SETTINGS)
-        detector, observer = self._start([repo_ctx], monkeypatch)
-        handler = observer.schedule.call_args.args[0]
-
-        handler.on_any_event(SimpleNamespace(
-            is_directory=False, src_path=str(repo / ".notes.tmp"), dest_path=str(repo / "notes.md"),
-        ))
-
-        assert detector.changed(repo_ctx, 131.0)
-
-
-class TestPollingDetector:
-    def test_reports_modified_time_change_after_poll_interval(self, tmp_multi_repo, monkeypatch):
-        """changed() rescans only after the poll interval and reports each modified-time change once."""
-        from src.detectors.poll import POLL_MIN_SECONDS, PollingDetector
-        from src.factory import RepoCtx
-
-        modified_times = iter([{"a.md": 1.0}, {"a.md": 2.0}, {"a.md": 2.0}])
-        monkeypatch.setattr("src.detectors.poll.get_md_modified_times", lambda repo_base: next(modified_times))
-        monkeypatch.setattr("src.detectors.poll.time.time", lambda: 0.0)
-        repo_ctx = RepoCtx(name="repo-a", repo_base=tmp_multi_repo["repo_a"], settings=SETTINGS)
-        detector = PollingDetector()
-        detector.start([repo_ctx])
-
-        assert not detector.changed(repo_ctx, POLL_MIN_SECONDS - 1)
-        assert detector.changed(repo_ctx, POLL_MIN_SECONDS)
-        assert not detector.changed(repo_ctx, 2 * POLL_MIN_SECONDS)
-
-
 class TestRun:
-    def test_commits_when_detector_reports_change(self, tmp_multi_repo, monkeypatch):
+    def test_commits_when_detector_reports_change(self, tmp_multi_repo, repo_settings, monkeypatch):
         """_run() scans and commits a repo when its detector reports a change."""
         from src.factory import RepoCtx
         from src.main import _run
@@ -365,7 +29,7 @@ class TestRun:
         monkeypatch.setattr("src.git_sync.pull_remote", MagicMock())
         monkeypatch.setattr("src.main.time.sleep", _interrupt_after_sleeps(1))
         repo_ctx = RepoCtx(name="repo-a", repo_base=tmp_multi_repo["repo_a"],
-                           stage_dirs=["openclaw/main/"], settings=SETTINGS)
+                           stage_dirs=["openclaw/main/"], settings=repo_settings)
         detector = MagicMock()
         detector.changed.return_value = True
 
@@ -373,13 +37,13 @@ class TestRun:
 
         commit_mock.assert_called_once()
 
-    def test_stops_detector_on_keyboard_interrupt(self, tmp_multi_repo, monkeypatch):
+    def test_stops_detector_on_keyboard_interrupt(self, tmp_multi_repo, repo_settings, monkeypatch):
         """_run() exits cleanly on KeyboardInterrupt and stops the detector."""
         from src.factory import RepoCtx
         from src.main import _run
 
         monkeypatch.setattr("src.main.time.sleep", _interrupt_after_sleeps(0))
-        repo_ctx = RepoCtx(name="repo-a", repo_base=tmp_multi_repo["repo_a"], settings=SETTINGS)
+        repo_ctx = RepoCtx(name="repo-a", repo_base=tmp_multi_repo["repo_a"], settings=repo_settings)
         detector = MagicMock()
 
         _run([repo_ctx], detector)
@@ -492,27 +156,6 @@ class TestMain:
         assert push_mock.call_count == 2
 
 
-class TestIntervalValidation:
-    """Intervals must be finite and positive; nan would stall the scan forever."""
-
-    @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "0", "-1", "abc", ""])
-    def test_invalid_interval_rejected(self, tmp_repo, value):
-        from src.factory import build_repo_ctxs
-
-        (tmp_repo / "sync.ini").write_text(f"[mesy]\nscan_interval_seconds = {value}\n")
-
-        with pytest.raises(ValueError, match="scan_interval_seconds"):
-            build_repo_ctxs([{"name": "r", "path": tmp_repo}])
-
-    def test_valid_interval_accepted(self, tmp_repo):
-        from src.factory import build_repo_ctxs
-
-        (tmp_repo / "sync.ini").write_text("[mesy]\nscan_interval_seconds = 45\n")
-
-        contexts = build_repo_ctxs([{"name": "r", "path": tmp_repo}])
-        assert contexts[0].settings["scan_interval_seconds"] == "45"
-
-
 class TestStartupExitStatus:
     """Misconfiguration must exit non-zero so Restart=on-failure actually restarts."""
 
@@ -535,51 +178,3 @@ class TestStartupExitStatus:
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 1
-
-
-class TestScanFailureHandling:
-    def test_repeated_identical_failure_logs_once(self, caplog):
-        from src.factory import RepoCtx
-        from src.cycle import _scan_failures, scan_repo
-
-        _scan_failures.clear()
-        target = MagicMock()
-        target.name = "t"
-        target.scan.side_effect = ValueError("same conflict")
-        repo_ctx = RepoCtx(name="r", repo_base=Path("/tmp"), targets=[target],
-                          stage_dirs=[], settings={})
-
-        with caplog.at_level("ERROR"):
-            for _ in range(3):
-                assert scan_repo(repo_ctx) is False
-        assert len(caplog.records) == 1
-
-    def test_recovery_is_reported(self, caplog):
-        from src.factory import RepoCtx
-        from src.cycle import _scan_failures, scan_repo
-
-        _scan_failures.clear()
-        target = MagicMock()
-        target.name = "t"
-        target.scan.side_effect = [ValueError("boom"), None]
-        repo_ctx = RepoCtx(name="r", repo_base=Path("/tmp"), targets=[target],
-                          stage_dirs=[], settings={})
-
-        with caplog.at_level("INFO"):
-            assert scan_repo(repo_ctx) is False
-            assert scan_repo(repo_ctx) is True
-        assert any("recovered" in r.message for r in caplog.records)
-
-    def test_healthy_target_still_scans_when_sibling_fails(self):
-        from src.factory import RepoCtx
-        from src.cycle import _scan_failures, scan_repo
-
-        _scan_failures.clear()
-        bad, good = MagicMock(), MagicMock()
-        bad.name, good.name = "bad", "good"
-        bad.scan.side_effect = ValueError("boom")
-        repo_ctx = RepoCtx(name="r", repo_base=Path("/tmp"), targets=[bad, good],
-                          stage_dirs=[], settings={})
-
-        assert scan_repo(repo_ctx) is False
-        assert good.scan.call_count == 1

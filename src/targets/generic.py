@@ -228,9 +228,9 @@ class GenericTarget(SyncTarget):
 
     def _should_exclude(self, name: str) -> bool:
         """Check if a file/dir name matches the exclude list."""
-        for pattern in self.exclude:
-            pattern = pattern.rstrip("/")
-            if fnmatch.fnmatch(name, pattern):
+        for pat in self.exclude:
+            pat = pat.rstrip("/")
+            if fnmatch.fnmatch(name, pat):
                 return True
         return False
 

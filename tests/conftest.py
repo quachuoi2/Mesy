@@ -27,6 +27,11 @@ def tmp_repo(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def repo_settings():
+    return {"debounce_seconds": "30", "pull_interval_seconds": "60", "scan_interval_seconds": "60"}
+
+
+@pytest.fixture
 def tmp_multi_repo(tmp_path, monkeypatch):
     """Create two independent data repos and patch REPOS_CFG_PATH.
 
