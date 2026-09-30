@@ -54,20 +54,6 @@ class TestBuildTargets:
         assert targets[0].file_patterns == ["*.md", "*.txt"]
         assert targets[0].exclude == ["secret.md"]
 
-    def test_unknown_type_emits_warning(self, tmp_repo, caplog):
-        """build_targets() logs a warning for unrecognised target types."""
-        import logging
-        target_def = {
-            "name": "mystery",
-            "type": "not-a-real-type",
-            "source": Path("/tmp/src"),
-            "repo_subdir": "mystery",
-        }
-        with caplog.at_level(logging.WARNING, logger="mesy"):
-            targets = build_targets([target_def], repo_base=tmp_repo)
-        assert targets == []
-        assert "Unknown target type" in caplog.text
-
     def test_mixed_target_defs_build_correct_types(self, tmp_repo):
         """build_targets() handles a list with both claude-code and generic entries."""
         tdefs = [

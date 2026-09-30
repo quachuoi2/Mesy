@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from src.config import load_project_mappings
+from src.config import DEFAULT_FILE_PATTERNS, DEFAULT_SYNC_MODE, load_project_mappings
 from src.pending import add_pending, pending_path, prune_pending
 from src.targets._migration import ProjectPair, ensure_real_dir, ensure_real_file
 from src.targets.base import SyncTarget
@@ -25,16 +25,17 @@ class ClaudeCodeTarget(SyncTarget):
         repo_base: Path,
         claude_dir: Path | None = None,
         projects_dir: Path | None = None,
-        sync_mode: str = "symlink",
+        sync_mode: str = DEFAULT_SYNC_MODE,
     ):
         super().__init__(
             name="claude-code",
             src=src,
             target_dir=target_dir,
             repo_base=repo_base,
-            file_patterns=["*.md"],
+            file_patterns=list(DEFAULT_FILE_PATTERNS),
             sync_mode=sync_mode,
         )
+
         self.claude_dir = claude_dir or CLAUDE_DIR
         self.projects_dir = projects_dir or PROJECTS_DIR
 
@@ -45,12 +46,15 @@ class ClaudeCodeTarget(SyncTarget):
     def scan(self) -> None:
         """Discover projects and sync them using the three-phase model."""
         mapping = load_project_mappings(repo_base=self.repo_base)
+
         self._migrate_repo_names(mapping)
         prune_pending(self.repo_base, mapping)
+
         if not self.projects_dir.exists():
             pairs: list[ProjectPair] = []
         else:
             pairs = self._walk_and_adopt(mapping)
+
         self._assert_phase1_invariants(mapping)
         self._sync(pairs)
 
@@ -71,6 +75,7 @@ class ClaudeCodeTarget(SyncTarget):
             canonical_dir = repo_projects_dir / canonical
             if canonical_dir.exists():
                 continue
+
             for raw_name in raw_names:
                 raw_dir = repo_projects_dir / raw_name
                 if raw_dir.exists() and raw_dir.is_dir():
@@ -87,6 +92,7 @@ class ClaudeCodeTarget(SyncTarget):
         repo_projects_dir = self.repo_base / "claude" / "projects"
         if not repo_projects_dir.exists():
             return
+
         existing = {d.name for d in repo_projects_dir.iterdir() if d.is_dir()}
         for raw in mapping:
             if raw in existing:
@@ -104,12 +110,15 @@ class ClaudeCodeTarget(SyncTarget):
         ``.pending`` file and do NOT yield a pair — Phase 3 never sees them.
         """
         pairs: list[ProjectPair] = []
+
         for project_dir in self.projects_dir.iterdir():
             if not project_dir.is_dir():
                 continue
+
             pair = self._classify_project(project_dir, mapping)
             if pair is not None:
                 pairs.append(pair)
+
         return pairs
 
     def _classify_project(
@@ -135,12 +144,15 @@ class ClaudeCodeTarget(SyncTarget):
 
     def _mapped_pair(self, memory_dir: Path, local_claude_md: Path, canonical: str) -> ProjectPair:
         canonical_dir = self.repo_base / "claude" / "projects" / canonical
+
         if self.sync_mode == "copy":
             # Copy mode needs real files; undo links left by an earlier symlink-mode run.
             if memory_dir.is_symlink():
                 ensure_real_dir(memory_dir, repo_fallback=canonical_dir)
+
             if local_claude_md.is_symlink():
                 ensure_real_file(local_claude_md, repo_fallback=canonical_dir / "CLAUDE.md")
+
         return ProjectPair(
             local_memory=memory_dir,
             local_claude_md=local_claude_md,
@@ -162,6 +174,7 @@ class ClaudeCodeTarget(SyncTarget):
     def _sync(self, pairs: list[ProjectPair]) -> None:
         """Sync global CLAUDE.md and rules/, then each project pair."""
         self._sync_global()
+
         for pair in pairs:
             self._sync_project(pair)
 
@@ -169,12 +182,14 @@ class ClaudeCodeTarget(SyncTarget):
         """Sync ~/.claude/CLAUDE.md and ~/.claude/rules/ against the repo."""
         global_dir = self.repo_base / "claude" / "global"
         global_dir.mkdir(parents=True, exist_ok=True)
+
         self._sync_file(self.claude_dir / "CLAUDE.md", global_dir / "CLAUDE.md", label="global CLAUDE.md")
         self._sync_dir(self.claude_dir / "rules", global_dir / "rules", label="global rules")
 
     def _sync_project(self, pair: ProjectPair) -> None:
         """Sync a single mapped project's CLAUDE.md and memory/ dir."""
         pair.canonical_dir.mkdir(parents=True, exist_ok=True)
+
         self._sync_file(
             pair.local_claude_md,
             pair.canonical_dir / "CLAUDE.md",

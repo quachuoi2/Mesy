@@ -58,6 +58,8 @@ def generic_env(tmp_path, tmp_repo):
     """Source + target_dir directories for GenericTarget tests."""
     src = tmp_path / "source"
     src.mkdir()
+
     target_dir = tmp_repo / "openclaw" / "main"
     target_dir.mkdir(parents=True, exist_ok=True)
+
     return {"src": src, "target_dir": target_dir, "tmp_repo": tmp_repo}

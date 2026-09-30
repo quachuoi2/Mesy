@@ -79,11 +79,9 @@ class TestCommitAndPush:
     def test_stages_dirs_commits_and_pushes(self, tmp_repo, monkeypatch):
         """commit_and_push() runs add, commit, pull --rebase, push in order."""
         commands = []
-        call_count = [0]
 
         def fake_run(cmd, **kw):
             commands.append(cmd)
-            call_count[0] += 1
             if "status" in cmd:
                 # has_local_changes -> True
                 return subprocess.CompletedProcess(cmd, 0, "M file.md", "")

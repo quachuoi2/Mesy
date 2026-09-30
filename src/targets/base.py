@@ -8,6 +8,7 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from src.config import DEFAULT_FILE_PATTERNS, DEFAULT_SYNC_MODE
 from src.targets._merge import merge_conflicting_file
 
 log = logging.getLogger("mesy")
@@ -31,13 +32,13 @@ class SyncTarget(ABC):
         repo_base: Path | None = None,
         file_patterns: list[str] | None = None,
         exclude: list[str] | None = None,
-        sync_mode: str = "symlink",
+        sync_mode: str = DEFAULT_SYNC_MODE,
     ):
         self.name = name
         self.src = src
         self.target_dir = target_dir
         self.repo_base = repo_base if repo_base is not None else target_dir.parent
-        self.file_patterns = file_patterns or ["*.md"]
+        self.file_patterns = file_patterns or list(DEFAULT_FILE_PATTERNS)
         self.exclude = exclude or []
         self.sync_mode = sync_mode
 
@@ -82,11 +83,13 @@ class SyncTarget(ABC):
 
         if local.is_file():
             repo.parent.mkdir(parents=True, exist_ok=True)
+
             if not repo.exists():
                 shutil.copy2(local, repo)
                 log.info("Copied %s into repo", label)
             elif not filecmp.cmp(local, repo, shallow=False):
                 merge_conflicting_file(local=local, repo=repo)
+
             local.unlink()
             local.symlink_to(repo)
             log.info("Symlinked %s", label)
@@ -105,6 +108,7 @@ class SyncTarget(ABC):
     def _sync_dir_copy(self, local: Path, repo: Path) -> None:
         local.mkdir(parents=True, exist_ok=True)
         repo.mkdir(parents=True, exist_ok=True)
+
         merge_into(local, repo)
         _copy_missing(repo, local)
 
@@ -115,21 +119,18 @@ class SyncTarget(ABC):
         if local.is_dir():
             repo.mkdir(parents=True, exist_ok=True)
             merge_into(local, repo)
-            if not self._verify_migration(local, repo):
+
+            if not all_copied(local, repo):
                 log.error("Migration verification failed for %s, skipping rmtree", label)
                 return
+
             shutil.rmtree(local)
             local.symlink_to(repo, target_is_directory=True)
             log.info("Adopted %s -> %s", label, repo)
-
         elif repo.exists() and not local.exists():
             local.parent.mkdir(parents=True, exist_ok=True)
             local.symlink_to(repo, target_is_directory=True)
             log.info("Symlinked %s (from repo)", label)
-
-    def _verify_migration(self, src_dir: Path, target_dir: Path) -> bool:
-        """Check that every file in source_dir has a corresponding file in target_dir."""
-        return all_copied(src_dir, target_dir)
 
 
 def _files(root: Path) -> list[Path]:

@@ -8,6 +8,7 @@ import logging
 import shutil
 from pathlib import Path
 
+from src.config import DEFAULT_SYNC_MODE
 from src.targets._merge import merge_conflicting_file
 from src.sync_state import SyncState
 from src.targets._migration import FilePair, ensure_real_file
@@ -28,7 +29,7 @@ class GenericTarget(SyncTarget):
         repo_base: Path | None = None,
         file_patterns: list[str] | None = None,
         exclude: list[str] | None = None,
-        sync_mode: str = "symlink",
+        sync_mode: str = DEFAULT_SYNC_MODE,
     ):
         super().__init__(
             name=name,
@@ -39,7 +40,7 @@ class GenericTarget(SyncTarget):
             exclude=exclude,
             sync_mode=sync_mode,
         )
-        # Each copy-mode target gets its own SyncState backed by its data repo.
+
         if self.sync_mode == "copy":
             self._sync_state = SyncState(
                 hash_file=self.repo_base / ".mesy_sync_hashes.json"
@@ -66,6 +67,7 @@ class GenericTarget(SyncTarget):
         try:
             rel = self.target_dir.relative_to(self.repo_base)
             return [str(rel) + "/"]
+
         except ValueError:
             return [str(self.target_dir) + "/"]
 
@@ -103,6 +105,7 @@ class GenericTarget(SyncTarget):
 
     def _walk_dir(self, src_dir: Path, target_dir: Path) -> list[FilePair]:
         target_dir.mkdir(parents=True, exist_ok=True)
+
         pairs, src_names = self._walk_src_side(src_dir, target_dir)
         pairs.extend(self._walk_repo_side(src_dir, target_dir, src_names))
         return pairs
@@ -110,9 +113,11 @@ class GenericTarget(SyncTarget):
     def _walk_src_side(self, src_dir: Path, target_dir: Path) -> tuple[list[FilePair], set[str]]:
         pairs: list[FilePair] = []
         src_names: set[str] = set()
+
         for item in sorted(src_dir.iterdir()):
             if self._should_exclude(item.name):
                 continue
+
             src_names.add(item.name)
 
             if item.is_symlink():
@@ -121,7 +126,7 @@ class GenericTarget(SyncTarget):
                     fallback = repo_file if repo_file.exists() else None
                     if not item.is_dir() and self._matches_patterns(item.name):
                         ensure_real_file(item, repo_fallback=fallback)
-                        if item.exists():  # shape-fix succeeded
+                        if item.exists():
                             pairs.append(FilePair(src_file=item, repo_file=repo_file))
                 elif self._matches_patterns(item.name):
                     resolved_ok = (
@@ -133,6 +138,7 @@ class GenericTarget(SyncTarget):
                         log.info(
                             "[%s] Fixed broken/wrong symlink: %s", self.name, item.name
                         )
+
                 continue
 
             if item.is_dir():
@@ -143,20 +149,25 @@ class GenericTarget(SyncTarget):
                 continue
 
             pairs.append(FilePair(src_file=item, repo_file=target_dir / item.name))
+
         return pairs, src_names
 
     def _walk_repo_side(self, src_dir: Path, target_dir: Path, src_names: set[str]) -> list[FilePair]:
         pairs: list[FilePair] = []
+
         for repo_item in sorted(target_dir.iterdir()):
             if repo_item.name in src_names:
                 continue
+
             if repo_item.is_dir():
                 src_subdir = src_dir / repo_item.name
                 src_subdir.mkdir(parents=True, exist_ok=True)
                 pairs.extend(self._walk_dir(src_subdir, repo_item))
                 continue
+
             if not self._matches_patterns(repo_item.name):
                 continue
+
             src_file = src_dir / repo_item.name
             if src_file.is_symlink():
                 if self.sync_mode == "copy":
@@ -171,8 +182,11 @@ class GenericTarget(SyncTarget):
                         src_file.name,
                         repo_item.name,
                     )
+
                 continue
+
             pairs.append(FilePair(src_file=src_file, repo_file=repo_item))
+
         return pairs
 
     def _sync(self, pairs: list[FilePair]) -> None:
@@ -189,7 +203,6 @@ class GenericTarget(SyncTarget):
         repo = pair.repo_file
 
         if src.is_symlink():
-            # Already correct — nothing to do.
             return
 
         if src.is_file():
@@ -198,6 +211,7 @@ class GenericTarget(SyncTarget):
                 log.info("[%s] Copied %s into repo", self.name, src.name)
             elif not filecmp.cmp(src, repo, shallow=False):
                 merge_conflicting_file(local=src, repo=repo)
+
             src.unlink()
             src.symlink_to(repo)
             log.info("[%s] Symlinked %s", self.name, src.name)
@@ -215,6 +229,7 @@ class GenericTarget(SyncTarget):
                 repo.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, repo)
                 log.info("[%s] Copied %s -> repo (copy mode)", self.name, src.name)
+
                 key = self._repo_key(repo)
                 self._sync_state.set_hash(key, src.read_text())
             elif not filecmp.cmp(src, repo, shallow=False):
@@ -223,6 +238,7 @@ class GenericTarget(SyncTarget):
             src.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(repo, src)
             log.info("[%s] Copied %s -> source (copy mode)", self.name, repo.name)
+
             key = self._repo_key(repo)
             self._sync_state.set_hash(key, repo.read_text())
 
@@ -232,6 +248,7 @@ class GenericTarget(SyncTarget):
             pat = pat.rstrip("/")
             if fnmatch.fnmatch(name, pat):
                 return True
+
         return False
 
     def _matches_patterns(self, name: str) -> bool:
@@ -242,6 +259,7 @@ class GenericTarget(SyncTarget):
         """Return the repo_base-relative path as a stable key for hash storage."""
         try:
             return str(repo_file.relative_to(self.repo_base))
+
         except ValueError:
             return str(repo_file)
 

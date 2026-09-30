@@ -14,6 +14,9 @@ from src.factory import RepoCtx, build_repo_ctxs
 
 LOG_FMT = "%(asctime)s [%(levelname)s] %(message)s"
 LOOP_TICK_SECONDS = 1.0
+LOG_FILE_NAME = "log.log"
+LOG_MAX_BYTES = 1_000_000
+LOG_BACKUP_COUNT = 1
 log = logging.getLogger("mesy")
 
 
@@ -29,7 +32,12 @@ def main() -> None:
 
 
 def _setup_logging() -> None:
-    log_file = RotatingFileHandler(MESY_DIR / "log.log", maxBytes=1_000_000, backupCount=1, encoding="utf-8")
+    log_file = RotatingFileHandler(
+        MESY_DIR / LOG_FILE_NAME,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8"
+    )
     logging.basicConfig(level=logging.INFO, format=LOG_FMT, handlers=[log_file])
 
 

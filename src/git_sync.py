@@ -7,13 +7,15 @@ from pathlib import Path
 
 from src.timestamp import now_iso
 
+GIT_TIMEOUT_SECONDS = 30
+DEFAULT_BRANCH = "main"
 log = logging.getLogger("mesy")
 
 
 def git(*args: str, repo_base: Path, check: bool = False) -> subprocess.CompletedProcess:
     cmd = ["git", "-C", str(repo_base)] + list(args)
     log.debug("git %s", " ".join(args))
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=check)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=check)
 
 
 def has_local_changes(repo_base: Path) -> bool:
@@ -23,7 +25,7 @@ def has_local_changes(repo_base: Path) -> bool:
 
 def current_branch(repo_base: Path) -> str:
     result = git("symbolic-ref", "--short", "HEAD", repo_base=repo_base)
-    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else "main"
+    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else DEFAULT_BRANCH
 
 
 def commit_and_push(stage_dirs: list[str], repo_base: Path) -> None:

@@ -22,29 +22,30 @@ import sys
 from configparser import ConfigParser
 from pathlib import Path
 
-from src.config import load_project_mappings, load_repos, load_sync_cfg, load_targets
+from src.config import (
+    MESY_DIR,
+    REPOS_CFG_PATH,
+    SETTING_DEFAULTS,
+    load_project_mappings,
+    load_repos,
+    load_sync_cfg,
+    load_targets,
+)
+from src.git_sync import DEFAULT_BRANCH
 from src.pending import add_pending
 from src.targets._merge import split_frontmatter
 from src.targets.base import all_copied, merge_into
+from src.targets.claude_code import CLAUDE_DIR
 from src.timestamp import now_iso
 
-MESY_DIR = Path(__file__).resolve().parent
-REPOS_CFG_PATH = MESY_DIR / "repos.ini"
 IS_WINDOWS = platform.system() == "Windows"
 
-if IS_WINDOWS:
-    CLAUDE_DIR = Path(os.environ["USERPROFILE"]) / ".claude"
-else:
-    CLAUDE_DIR = Path.home() / ".claude"
-
-
-SYNC_CFG_TEMPLATE = """\
+_SETTING_LINES = "\n".join(f"{key} = {value}" for key, value in SETTING_DEFAULTS.items())
+SYNC_CFG_TEMPLATE = f"""\
 # Mesy per-repo sync config. See docs for full options.
 
 [mesy]
-debounce_seconds = 30
-pull_interval_seconds = 60
-scan_interval_seconds = 60
+{_SETTING_LINES}
 
 # Example Claude Code target (uncomment and edit):
 # [target:claude_code]
@@ -63,11 +64,6 @@ scan_interval_seconds = 60
 
 def log(tag: str, msg: str) -> None:
     print(f"[{tag}] {msg}")
-
-
-# ---------------------------------------------------------------------------
-# repos.ini management
-# ---------------------------------------------------------------------------
 
 
 def _read_repos_cfg() -> ConfigParser:
@@ -144,7 +140,7 @@ def _init_with_remote(repo_base: Path, url: str) -> None:
     if head_result.returncode == 0 and head_result.stdout.strip():
         branch = head_result.stdout.strip().rsplit("/", 1)[-1]
     else:
-        branch = "main"
+        branch = DEFAULT_BRANCH
 
     _git(repo_base, "checkout", "-b", branch)
 
@@ -268,11 +264,6 @@ def _prompt_path() -> Path:
         return resolved
 
 
-# ---------------------------------------------------------------------------
-# sync.ini handling (per-repo)
-# ---------------------------------------------------------------------------
-
-
 def ensure_sync_cfg(repo_base: Path) -> bool:
     """Verify repo_base has a sync.ini. Offer to create a template if missing.
 
@@ -298,11 +289,6 @@ def ensure_sync_cfg(repo_base: Path) -> bool:
 def load_sync_cfg_targets(repo_base: Path) -> list[dict]:
     """Load target definitions from a repo's sync.ini."""
     return load_targets(load_sync_cfg(repo_base))
-
-
-# ---------------------------------------------------------------------------
-# File helpers (unchanged from original — pure, no globals)
-# ---------------------------------------------------------------------------
 
 
 def merge_conflicting_file(local: Path, repo: Path) -> None:
@@ -424,11 +410,6 @@ def _move_dir_into_repo(link: Path, target: Path) -> bool:
 
     shutil.rmtree(link)
     return True
-
-
-# ---------------------------------------------------------------------------
-# Per-repo migration
-# ---------------------------------------------------------------------------
 
 
 def migrate_repo_to_canonical(repo_base: Path, mapping: dict[str, str]) -> None:
@@ -653,11 +634,6 @@ def _setup_generic(target_def: dict, repo_base: Path) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Daemon install (unchanged)
-# ---------------------------------------------------------------------------
-
-
 def install_systemd_service() -> None:
     """Install and enable the systemd user service (Linux only)."""
     service_template = MESY_DIR / "mesy.service"
@@ -730,11 +706,6 @@ def install_daemon() -> None:
         install_task_scheduler(sys.executable)
     else:
         install_systemd_service()
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 
 def main() -> None:

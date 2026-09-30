@@ -11,12 +11,7 @@ log = logging.getLogger("mesy")
 
 
 class SyncState:
-    """Persist content hashes so three-way sync can tell who changed a file.
-
-    Each instance is backed by an explicit hash file path.  There is no longer
-    a module-level singleton — callers are responsible for constructing a
-    SyncState with the appropriate hash_file for their data repo.
-    """
+    """Persist content hashes so three-way sync can tell who changed a file."""
 
     def __init__(self, hash_file: Path) -> None:
         self._path = hash_file

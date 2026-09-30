@@ -78,6 +78,7 @@ class TestSyncGlobalRules:
         (local_rules / "sub").mkdir(parents=True)
         (local_rules / "code.md").write_text("# Code")
         (local_rules / "sub" / "deep.md").write_text("# Deep")
+
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
 
         make_target(claude_env).scan()
@@ -92,6 +93,7 @@ class TestSyncGlobalRules:
         repo_rules = claude_env["repo"] / "claude" / "global" / "rules"
         repo_rules.mkdir(parents=True)
         (repo_rules / "code.md").write_text("# Code")
+
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
 
         make_target(claude_env).scan()
@@ -104,9 +106,11 @@ class TestSyncGlobalRules:
         local_rules = claude_env["claude_dir"] / "rules"
         local_rules.mkdir()
         (local_rules / "local.md").write_text("# Local")
+
         repo_rules = claude_env["repo"] / "claude" / "global" / "rules"
         repo_rules.mkdir(parents=True)
         (repo_rules / "repo.md").write_text("# Repo")
+
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
 
         make_copy_target(claude_env).scan()
@@ -137,7 +141,6 @@ class TestScanProjects:
         assert (canonical_dir / "notes.md").exists()
         assert memory_dir.is_symlink()
         assert memory_dir.resolve() == canonical_dir.resolve()
-
 
 
 class TestSyncClaudeMd:
@@ -184,7 +187,7 @@ class TestSyncClaudeMd:
 
 class TestSafetyVerification:
     def test_rmtree_skipped_on_failed_migration(self, claude_env, monkeypatch, caplog):
-        """rmtree is NOT called when _verify_migration returns False."""
+        """rmtree is NOT called when all_copied returns False."""
         import logging
 
         raw_name = "-home-user-BrokenProject"
@@ -195,10 +198,9 @@ class TestSafetyVerification:
         memory_dir.mkdir(parents=True)
         (memory_dir / "important.md").write_text("critical data")
 
-        # Force _verify_migration to return False so the safety gate fires.
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
+        monkeypatch.setattr("src.targets.base.all_copied", lambda src, dest_dir: False)
         target = make_target(claude_env)
-        monkeypatch.setattr(target, "_verify_migration", lambda src, dest_dir: False)
 
         with caplog.at_level(logging.ERROR, logger="mesy"):
             target.scan()
@@ -225,6 +227,7 @@ class TestCopyModeGlobalClaudeMd:
     def test_copy_mode_syncs_local_to_repo(self, claude_env, monkeypatch):
         """copy mode: _sync_global copies local to repo without symlinking."""
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+
         local_claude = claude_env["claude_dir"] / "CLAUDE.md"
         local_claude.write_text("# Global Config")
 
@@ -238,6 +241,7 @@ class TestCopyModeGlobalClaudeMd:
     def test_copy_mode_syncs_repo_to_local(self, claude_env, monkeypatch):
         """copy mode: _sync_global copies repo to local when local missing."""
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+
         repo_claude = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
         repo_claude.write_text("# Repo Config")
 
@@ -356,7 +360,6 @@ class TestSymlinkToCopyMigration:
         # Unmapped symlinked memory_dir must remain as-is
         assert memory_dir.is_symlink()
         assert memory_dir.resolve() == scratch_dest.resolve()
-
 
     def test_dangling_symlink_falls_back_to_canonical_dir(self, claude_env, monkeypatch, caplog):
         """copy mode: when a symlinked memory_dir points at a missing target, files are
@@ -564,6 +567,7 @@ class TestPhase1RepoRename:
         # will raise.  Catch that so we can still assert the raw dir is intact.
         try:
             target.scan()
+
         except AssertionError:
             pass
 
@@ -702,4 +706,5 @@ class TestGetStageDirs:
     def test_returns_correct_dirs(self, claude_env):
         """get_stage_dirs() returns ['global/', 'projects/']."""
         target = make_target(claude_env)
+
         assert target.get_stage_dirs() == ["claude/global/", "claude/projects/"]

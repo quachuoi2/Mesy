@@ -12,12 +12,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+TMP_SUFFIX = ".mesy_tmp"
 log = logging.getLogger("mesy")
-
-
-# ---------------------------------------------------------------------------
-# Pair dataclasses (Phase 2 output, Phase 3 input)
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -35,11 +31,6 @@ class FilePair:
 
     src_file: Path
     repo_file: Path
-
-
-# ---------------------------------------------------------------------------
-# Shape-fix helpers
-# ---------------------------------------------------------------------------
 
 
 def ensure_real_file(path: Path, repo_fallback: Path | None) -> bool:
@@ -75,7 +66,7 @@ def ensure_real_file(path: Path, repo_fallback: Path | None) -> bool:
 
 
 def _replace_with_copy(path: Path, src: Path) -> None:
-    tmp = path.parent / (path.name + ".mesy_tmp")
+    tmp = path.parent / (path.name + TMP_SUFFIX)
     shutil.copy2(src, tmp)
 
     path.unlink()
@@ -89,8 +80,7 @@ def ensure_real_dir(path: Path, repo_fallback: Path | None) -> bool:
     missing.  Returns True when a real directory was written.  A dangling link
     with no usable fallback is removed and False returned.
 
-    Files only — does not recurse into subdirectories (matches the flat-copy
-    semantics of the old _copy_dir_files helper).
+    Files only — does not recurse into subdirectories.
     Atomic via tmp+rename: a crash mid-copy leaves the original symlink intact.
     Never merges conflicts — that is Phase 3's job.
     """
@@ -106,7 +96,7 @@ def ensure_real_dir(path: Path, repo_fallback: Path | None) -> bool:
         )
         return False
 
-    tmp = path.parent / (path.name + ".mesy_tmp")
+    tmp = path.parent / (path.name + TMP_SUFFIX)
     tmp.mkdir(parents=True, exist_ok=True)
     for item in src_dir.iterdir():
         if item.is_dir():

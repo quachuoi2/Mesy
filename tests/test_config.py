@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-from configparser import ConfigParser
-from pathlib import Path
-
-import pytest
-
-import src.config as config_mod
 from src.factory import RepoCtx
 from src.config import (
     get_mesy_settings,

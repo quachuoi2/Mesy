@@ -12,6 +12,15 @@ log = logging.getLogger("mesy")
 MESY_DIR = Path(__file__).resolve().parent.parent
 REPOS_CFG_PATH = MESY_DIR / "repos.ini"
 
+SETTING_DEFAULTS = {
+    "debounce_seconds": "30",
+    "pull_interval_seconds": "60",
+    "scan_interval_seconds": "60",
+}
+SYNC_MODES = {"symlink", "copy"}
+DEFAULT_SYNC_MODE = "symlink"
+DEFAULT_FILE_PATTERNS = ["*.md"]
+
 
 def load_repos() -> list[dict]:
     """Parse repos.ini and return a list of repo dicts.
@@ -52,14 +61,9 @@ def _parse_repo(repos_cfg: ConfigParser, section: str) -> dict | None:
 def load_sync_cfg(repo_base: Path) -> ConfigParser:
     """Load sync.ini from repo_base and return the full ConfigParser."""
     sync_cfg_path = repo_base / "sync.ini"
-    defaults = {
-        "debounce_seconds": "30",
-        "pull_interval_seconds": "60",
-        "scan_interval_seconds": "60",
-    }
 
     sync_cfg = ConfigParser()
-    sync_cfg.read_dict({"mesy": defaults})
+    sync_cfg.read_dict({"mesy": SETTING_DEFAULTS})
     if sync_cfg_path.exists():
         sync_cfg.read(sync_cfg_path)
     return sync_cfg
@@ -71,7 +75,6 @@ def get_mesy_settings(sync_cfg: ConfigParser) -> dict:
 
 
 def load_project_mappings(repo_base: Path) -> dict[str, str]:
-    """Claude Code memory config loading"""
     """Load projects.ini from repo_base and return {raw_claude_name: canonical_name} mapping."""
     projects_cfg_path = repo_base / "claude" / "projects.ini"
     mapping = {}
@@ -112,7 +115,7 @@ def _parse_target(sync_cfg: ConfigParser, section: str) -> dict:
     target_def["repo_subdir"] = sync_cfg.get(section, "repo_subdir")
     if sync_cfg.has_option(section, "mapping_cfg"):
         target_def["mapping_cfg"] = sync_cfg.get(section, "mapping_cfg")
-    target_def["file_patterns"] = _list_option(sync_cfg, section, "file_patterns", ["*.md"])
+    target_def["file_patterns"] = _list_option(sync_cfg, section, "file_patterns", list(DEFAULT_FILE_PATTERNS))
     target_def["exclude"] = _list_option(sync_cfg, section, "exclude", [])
     target_def["sync_mode"] = _sync_mode(sync_cfg, section, name)
     return target_def
@@ -146,15 +149,15 @@ def _list_option(sync_cfg: ConfigParser, section: str, option: str, default: lis
 
 
 def _sync_mode(sync_cfg: ConfigParser, section: str, name: str) -> str:
-    sync_mode = sync_cfg.get(section, "sync_mode", fallback="symlink").strip()
-    valid_sync_modes = {"symlink", "copy"}
-    if sync_mode not in valid_sync_modes:
+    sync_mode = sync_cfg.get(section, "sync_mode", fallback=DEFAULT_SYNC_MODE).strip()
+    if sync_mode not in SYNC_MODES:
         log.warning(
-            "[target:%s] Invalid sync_mode=%r; must be one of %s — defaulting to 'symlink'",
+            "[target:%s] Invalid sync_mode=%r; must be one of %s — defaulting to %r",
             name,
             sync_mode,
-            sorted(valid_sync_modes),
+            sorted(SYNC_MODES),
+            DEFAULT_SYNC_MODE,
         )
-        sync_mode = "symlink"
+        sync_mode = DEFAULT_SYNC_MODE
 
     return sync_mode

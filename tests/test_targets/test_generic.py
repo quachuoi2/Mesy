@@ -70,8 +70,10 @@ class TestSetup:
             src=missing_src,
             target_dir=generic_env["target_dir"],
         )
+
         # Should not raise
         target.setup()
+
         # target_dir should remain empty (no new files created)
         assert list(generic_env["target_dir"].iterdir()) == []
 
@@ -209,6 +211,7 @@ class TestAdoptDirectoryCopy:
 
         for f in generic_env["src"].iterdir():
             assert not f.is_symlink(), f"{f} should not be a symlink in copy mode"
+
         for f in generic_env["target_dir"].iterdir():
             assert not f.is_symlink(), f"{f} should not be a symlink in copy mode"
 
@@ -435,6 +438,7 @@ class TestGetStageDirs:
     def test_returns_relative_path_with_trailing_slash(self, generic_env):
         """get_stage_dirs() returns the repo_subdir relative to MESY_DIR."""
         target = make_target(generic_env)
+
         stage_dirs = target.get_stage_dirs()
 
         # generic_env places target_dir at tmp_repo/openclaw/main
@@ -444,6 +448,7 @@ class TestGetStageDirs:
         """get_stage_dirs() uses absolute path when target_dir is outside repo_base."""
         outside_dir = tmp_path / "elsewhere"
         outside_dir.mkdir()
+
         # repo_base must be explicitly set to something that does NOT contain outside_dir
         unrelated_repo_base = tmp_path / "unrelated_data"
         unrelated_repo_base.mkdir()
@@ -453,5 +458,7 @@ class TestGetStageDirs:
             target_dir=outside_dir,
             repo_base=unrelated_repo_base,
         )
+
         stage_dirs = target.get_stage_dirs()
+
         assert stage_dirs == [str(outside_dir) + "/"]

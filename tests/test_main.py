@@ -76,8 +76,6 @@ class TestRun:
 class TestMain:
     def test_main_runs_initial_sync_cycle(self, tmp_repo, monkeypatch):
         """main() loads config, builds targets, calls pull_remote, scan, commit_and_push."""
-        from configparser import ConfigParser
-        from src.targets.base import SyncTarget
 
         sync_cfg_text = (
             "[target:openclaw]\n"
