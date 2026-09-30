@@ -115,7 +115,7 @@ class GenericTarget(SyncTarget):
         src_names: set[str] = set()
 
         for item in sorted(src_dir.iterdir()):
-            if self._should_exclude(item.name):
+            if is_excluded(item.name, self.exclude):
                 continue
 
             src_names.add(item.name)
@@ -124,11 +124,11 @@ class GenericTarget(SyncTarget):
                 repo_file = target_dir / item.name
                 if self.sync_mode == "copy":
                     fallback = repo_file if repo_file.exists() else None
-                    if not item.is_dir() and self._matches_patterns(item.name):
+                    if not item.is_dir() and matches_patterns(item.name, self.file_patterns):
                         ensure_real_file(item, repo_fallback=fallback)
                         if item.exists():
                             pairs.append(FilePair(src_file=item, repo_file=repo_file))
-                elif self._matches_patterns(item.name):
+                elif matches_patterns(item.name, self.file_patterns):
                     resolved_ok = (
                         item.exists() and item.resolve() == repo_file.resolve()
                     )
@@ -145,7 +145,7 @@ class GenericTarget(SyncTarget):
                 pairs.extend(self._walk_dir(item, target_dir / item.name))
                 continue
 
-            if not self._matches_patterns(item.name):
+            if not matches_patterns(item.name, self.file_patterns):
                 continue
 
             pairs.append(FilePair(src_file=item, repo_file=target_dir / item.name))
@@ -165,7 +165,7 @@ class GenericTarget(SyncTarget):
                 pairs.extend(self._walk_dir(src_subdir, repo_item))
                 continue
 
-            if not self._matches_patterns(repo_item.name):
+            if not matches_patterns(repo_item.name, self.file_patterns):
                 continue
 
             src_file = src_dir / repo_item.name
@@ -242,19 +242,6 @@ class GenericTarget(SyncTarget):
             key = self._repo_key(repo)
             self._sync_state.set_hash(key, repo.read_text())
 
-    def _should_exclude(self, name: str) -> bool:
-        """Check if a file/dir name matches the exclude list."""
-        for pat in self.exclude:
-            pat = pat.rstrip("/")
-            if fnmatch.fnmatch(name, pat):
-                return True
-
-        return False
-
-    def _matches_patterns(self, name: str) -> bool:
-        """Check if a filename matches any of the file_patterns."""
-        return any(fnmatch.fnmatch(name, pat) for pat in self.file_patterns)
-
     def _repo_key(self, repo_file: Path) -> str:
         """Return the repo_base-relative path as a stable key for hash storage."""
         try:
@@ -299,3 +286,11 @@ class GenericTarget(SyncTarget):
         shutil.copy2(winner, loser)
         log.info(message, self.name, winner.name)
         self._sync_state.set_hash(key, content)
+
+
+def is_excluded(name: str, exclude: list[str]) -> bool:
+    return any(fnmatch.fnmatch(name, pat.rstrip("/")) for pat in exclude)
+
+
+def matches_patterns(name: str, file_patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatch(name, pat) for pat in file_patterns)

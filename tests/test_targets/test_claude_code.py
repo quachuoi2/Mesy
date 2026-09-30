@@ -582,8 +582,8 @@ class TestPhase1Invariants:
     ) -> None:
         """_assert_phase1_invariants raises if a raw-named dir persists in the repo.
 
-        We simulate a failed rename by monkeypatching _migrate_repo_names to be
-        a no-op, then calling _assert_phase1_invariants directly.
+        We simulate a failed rename by creating the raw-named dir and calling
+        _assert_phase1_invariants directly.
         """
         raw_name = "-home-user-Stuck"
         mapping = {raw_name: "Stuck"}

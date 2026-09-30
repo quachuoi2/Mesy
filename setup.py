@@ -11,12 +11,10 @@ own `sync.ini`, and installs the background daemon.
 """
 
 import filecmp
-import fnmatch
 import logging
 import os
 import platform
 import shutil
-import socket
 import subprocess
 import sys
 from configparser import ConfigParser
@@ -31,11 +29,12 @@ from src.config import (
     load_sync_cfg,
     load_targets,
 )
-from src.git_sync import DEFAULT_BRANCH
+from src.git_sync import DEFAULT_BRANCH, git
 from src.pending import add_pending
-from src.targets._merge import split_frontmatter
+from src.targets._merge import merge_conflicting_file
 from src.targets.base import all_copied, merge_into
-from src.targets.claude_code import CLAUDE_DIR
+from src.targets.claude_code import CLAUDE_DIR, migrate_repo_names
+from src.targets.generic import is_excluded, matches_patterns
 from src.timestamp import now_iso
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -115,41 +114,34 @@ def _clone(repo_base: Path, url: str) -> None:
     log("ok", f"Cloned {url} into {repo_base}")
 
 
-def _git(repo_base: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(repo_base), *args],
-        capture_output=True, text=True,
-    )
-
-
 def _init_with_remote(repo_base: Path, url: str) -> None:
-    if _git(repo_base, "init").returncode != 0:
+    if git("init", repo_base=repo_base).returncode != 0:
         log("error", "git init failed")
         return
 
-    if _git(repo_base, "remote", "add", "origin", url).returncode != 0:
+    if git("remote", "add", "origin", url, repo_base=repo_base).returncode != 0:
         log("error", "git remote add failed")
         return
 
-    fetch_result = _git(repo_base, "fetch", "origin")
+    fetch_result = git("fetch", "origin", repo_base=repo_base)
     if fetch_result.returncode != 0:
         log("warn", f"git fetch failed: {fetch_result.stderr.strip()} — leaving repo initialized")
         return
 
-    head_result = _git(repo_base, "symbolic-ref", "refs/remotes/origin/HEAD")
+    head_result = git("symbolic-ref", "refs/remotes/origin/HEAD", repo_base=repo_base)
     if head_result.returncode == 0 and head_result.stdout.strip():
         branch = head_result.stdout.strip().rsplit("/", 1)[-1]
     else:
         branch = DEFAULT_BRANCH
 
-    _git(repo_base, "checkout", "-b", branch)
+    git("checkout", "-b", branch, repo_base=repo_base)
 
-    pull_result = _git(repo_base, "pull", "origin", branch, "--allow-unrelated-histories")
+    pull_result = git("pull", "origin", branch, "--allow-unrelated-histories", repo_base=repo_base)
     if pull_result.returncode != 0:
         log("warn", f"git pull failed: {pull_result.stderr.strip()}")
         return
 
-    _git(repo_base, "branch", f"--set-upstream-to=origin/{branch}", branch)
+    git("branch", f"--set-upstream-to=origin/{branch}", branch, repo_base=repo_base)
     log("ok", f"Initialized {repo_base} with remote {url} (branch {branch})")
 
 
@@ -291,32 +283,6 @@ def load_sync_cfg_targets(repo_base: Path) -> list[dict]:
     return load_targets(load_sync_cfg(repo_base))
 
 
-def merge_conflicting_file(local: Path, repo: Path) -> None:
-    """Merge two differing files by keeping both versions with conflict markers."""
-    hostname = socket.gethostname()
-    now = now_iso()
-
-    local_content = local.read_text()
-    repo_content = repo.read_text()
-
-    local_body, local_frontmatter = split_frontmatter(local_content)
-    repo_body, repo_frontmatter = split_frontmatter(repo_content)
-
-    merged_frontmatter = {**repo_frontmatter, **local_frontmatter, "conflict": "true"}
-    frontmatter_lines = "\n".join(f"{k}: {v}" for k, v in merged_frontmatter.items())
-
-    merged = (
-        f"---\n{frontmatter_lines}\n---\n\n"
-        f"<!-- CONFLICT ({now}): local ({hostname}) version -->\n"
-        f"{local_body.strip()}\n\n"
-        f"<!-- CONFLICT ({now}): repo version -->\n"
-        f"{repo_body.strip()}\n"
-    )
-
-    repo.write_text(merged)
-    log("conflict", f"  {repo.name}: both versions preserved (conflict: true)")
-
-
 def _already_linked(link: Path, target: Path, label: str) -> bool:
     """True when *link* already points at *target*; a link elsewhere is removed."""
     if not link.is_symlink():
@@ -412,36 +378,13 @@ def _move_dir_into_repo(link: Path, target: Path) -> bool:
     return True
 
 
-def migrate_repo_to_canonical(repo_base: Path, mapping: dict[str, str]) -> None:
-    """Rename raw-named project dirs in the repo to their canonical names."""
-    projects_dir = repo_base / "claude" / "projects"
-    if not projects_dir.exists():
-        return
-
-    raw_canonical_names: dict[str, list[str]] = {}
-    for raw, canonical in mapping.items():
-        raw_canonical_names.setdefault(canonical, []).append(raw)
-
-    for canonical, raw_names in raw_canonical_names.items():
-        canonical_dir = projects_dir / canonical
-        if canonical_dir.exists():
-            continue
-
-        for raw_name in raw_names:
-            raw_dir = projects_dir / raw_name
-            if raw_dir.exists() and raw_dir.is_dir():
-                raw_dir.rename(canonical_dir)
-                log("migrate", f"Renamed repo dir: {raw_name} -> {canonical}")
-                break
-
-
 def setup_claude_code_symlinks(repo_base: Path) -> None:
     """Symlink the global CLAUDE.md, rules/ and each project's memory for one data repo."""
     make_file_symlink(CLAUDE_DIR / "CLAUDE.md", repo_base / "claude" / "global" / "CLAUDE.md")
     make_symlink(CLAUDE_DIR / "rules", repo_base / "claude" / "global" / "rules")
 
     mapping = load_project_mappings(repo_base)
-    migrate_repo_to_canonical(repo_base, mapping)
+    migrate_repo_names(repo_base, mapping)
 
     claude_projects_dir = CLAUDE_DIR / "projects"
     if claude_projects_dir.exists():
@@ -495,10 +438,10 @@ def setup_generic_target(repo_base: Path, name: str, src: Path, repo_subdir: str
     target_dir = repo_base / repo_subdir
 
     if not src.exists():
-        log("skip", f"[{name}] Source {source} does not exist")
+        log("skip", f"[{name}] Source {src} does not exist")
         return
 
-    log("info", f"[{name}] Setting up: {source} -> {target_dir}")
+    log("info", f"[{name}] Setting up: {src} -> {target_dir}")
     target_dir.mkdir(parents=True, exist_ok=True)
     _adopt_dir(src, target_dir, name, file_patterns, exclude)
 
@@ -507,7 +450,7 @@ def _adopt_dir(src: Path, dest: Path, name: str, file_patterns: list[str], exclu
     dest.mkdir(parents=True, exist_ok=True)
 
     for item in sorted(src.iterdir()):
-        if any(fnmatch.fnmatch(item.name, pat.rstrip("/")) for pat in exclude):
+        if is_excluded(item.name, exclude):
             log("skip", f"  [{name}] Excluded: {item.name}")
             continue
 
@@ -518,7 +461,7 @@ def _adopt_dir(src: Path, dest: Path, name: str, file_patterns: list[str], exclu
             _adopt_dir(item, dest / item.name, name, file_patterns, exclude)
             continue
 
-        if not any(fnmatch.fnmatch(item.name, pat) for pat in file_patterns):
+        if not matches_patterns(item.name, file_patterns):
             continue
 
         _adopt_file(item, dest / item.name, name)
@@ -560,7 +503,7 @@ def _link_repo_item(repo_file: Path, src: Path, name: str, file_patterns: list[s
             _adopt_dir(src_sub, repo_file, name, file_patterns, exclude)
         return
 
-    if not any(fnmatch.fnmatch(repo_file.name, pat) for pat in file_patterns):
+    if not matches_patterns(repo_file.name, file_patterns):
         return
 
     src_file = src / repo_file.name
