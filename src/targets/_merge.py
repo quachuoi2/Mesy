@@ -15,12 +15,12 @@ def split_frontmatter(text: str) -> tuple[str, dict]:
     parts = text.split("---\n", 2)
     if len(parts) < 3:
         return text, {}
-    fm = {}
+    frontmatter = {}
     for line in parts[1].strip().split("\n"):
         if ": " in line:
             key, val = line.split(": ", 1)
-            fm[key.strip()] = val.strip()
-    return parts[2], fm
+            frontmatter[key.strip()] = val.strip()
+    return parts[2], frontmatter
 
 
 def merge_conflicting_file(local: Path, repo: Path) -> None:
@@ -28,14 +28,14 @@ def merge_conflicting_file(local: Path, repo: Path) -> None:
     hostname = socket.gethostname()
     now = datetime.now(timezone.utc).isoformat()
 
-    local_body, local_fm = split_frontmatter(local.read_text())
-    repo_body, repo_fm = split_frontmatter(repo.read_text())
+    local_body, local_frontmatter = split_frontmatter(local.read_text())
+    repo_body, repo_frontmatter = split_frontmatter(repo.read_text())
 
-    merged_fm = {**repo_fm, **local_fm, "conflict": "true"}
-    fm_lines = "\n".join(f"{k}: {v}" for k, v in merged_fm.items())
+    merged_frontmatter = {**repo_frontmatter, **local_frontmatter, "conflict": "true"}
+    frontmatter_lines = "\n".join(f"{k}: {v}" for k, v in merged_frontmatter.items())
 
     merged = (
-        f"---\n{fm_lines}\n---\n\n"
+        f"---\n{frontmatter_lines}\n---\n\n"
         f"<!-- CONFLICT ({now}): local ({hostname}) version -->\n"
         f"{local_body.strip()}\n\n"
         f"<!-- CONFLICT ({now}): repo version -->\n"

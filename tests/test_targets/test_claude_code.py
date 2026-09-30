@@ -13,9 +13,9 @@ from src.targets.claude_code import ClaudeCodeTarget
 def make_target(claude_env) -> ClaudeCodeTarget:
     """Helper to build a ClaudeCodeTarget with injected paths."""
     return ClaudeCodeTarget(
-        source=claude_env["projects_dir"],
-        repo_dir=claude_env["repo"] / "claude" / "projects",
-        data_dir=claude_env["repo"],
+        src=claude_env["projects_dir"],
+        target_dir=claude_env["repo"] / "claude" / "projects",
+        repo_base=claude_env["repo"],
         claude_dir=claude_env["claude_dir"],
         projects_dir=claude_env["projects_dir"],
     )
@@ -149,11 +149,11 @@ class TestSyncClaudeMd:
         local_claude = project_dir / "CLAUDE.md"
         local_claude.write_text("# Project Config")
 
-        repo_dir = claude_env["repo"] / "claude" / "projects" / "Project"
-        repo_dir.mkdir(parents=True)
+        canonical_dir = claude_env["repo"] / "claude" / "projects" / "Project"
+        canonical_dir.mkdir(parents=True)
 
         target = make_target(claude_env)
-        repo_claude = repo_dir / "CLAUDE.md"
+        repo_claude = canonical_dir / "CLAUDE.md"
         target._sync_file(local_claude, repo_claude, label=f"CLAUDE.md for {raw_name}")
 
         assert repo_claude.exists()
@@ -166,9 +166,9 @@ class TestSyncClaudeMd:
         project_dir = claude_env["projects_dir"] / raw_name
         project_dir.mkdir(parents=True)
 
-        repo_dir = claude_env["repo"] / "claude" / "projects" / "Project"
-        repo_dir.mkdir(parents=True)
-        repo_claude = repo_dir / "CLAUDE.md"
+        canonical_dir = claude_env["repo"] / "claude" / "projects" / "Project"
+        canonical_dir.mkdir(parents=True)
+        repo_claude = canonical_dir / "CLAUDE.md"
         repo_claude.write_text("# In Repo")
 
         local_claude = project_dir / "CLAUDE.md"
@@ -198,7 +198,7 @@ class TestSafetyVerification:
         # Force _verify_migration to return False so the safety gate fires.
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
         target = make_target(claude_env)
-        monkeypatch.setattr(target, "_verify_migration", lambda src, dst: False)
+        monkeypatch.setattr(target, "_verify_migration", lambda src, dest_dir: False)
 
         with caplog.at_level(logging.ERROR, logger="mesy"):
             target.scan()
@@ -212,9 +212,9 @@ class TestSafetyVerification:
 def make_copy_target(claude_env) -> ClaudeCodeTarget:
     """Helper to build a ClaudeCodeTarget in copy mode."""
     return ClaudeCodeTarget(
-        source=claude_env["projects_dir"],
-        repo_dir=claude_env["repo"] / "claude" / "projects",
-        data_dir=claude_env["repo"],
+        src=claude_env["projects_dir"],
+        target_dir=claude_env["repo"] / "claude" / "projects",
+        repo_base=claude_env["repo"],
         claude_dir=claude_env["claude_dir"],
         projects_dir=claude_env["projects_dir"],
         sync_mode="copy",

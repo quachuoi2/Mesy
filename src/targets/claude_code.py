@@ -20,25 +20,23 @@ class ClaudeCodeTarget(SyncTarget):
 
     def __init__(
         self,
-        source: Path,
-        repo_dir: Path,
-        data_dir: Path,
+        src: Path,
+        target_dir: Path,
+        repo_base: Path,
         claude_dir: Path | None = None,
         projects_dir: Path | None = None,
-        repo_base: Path | None = None,
         sync_mode: str = "symlink",
     ):
         super().__init__(
             name="claude-code",
-            source=source,
-            repo_dir=repo_dir,
-            data_dir=data_dir,
+            src=src,
+            target_dir=target_dir,
+            repo_base=repo_base,
             file_patterns=["*.md"],
             sync_mode=sync_mode,
         )
         self.claude_dir = claude_dir or CLAUDE_DIR
         self.projects_dir = projects_dir or PROJECTS_DIR
-        self.repo_base = repo_base or self.data_dir
 
     def setup(self) -> None:
         """Initial migration — called by setup.py, not the daemon."""
@@ -46,7 +44,7 @@ class ClaudeCodeTarget(SyncTarget):
 
     def scan(self) -> None:
         """Discover projects and sync them using the three-phase model."""
-        mapping = load_project_mappings(data_dir=self.data_dir)
+        mapping = load_project_mappings(repo_base=self.repo_base)
         self._migrate_repo_names(mapping)
         prune_pending(self.repo_base, mapping)
         if not self.projects_dir.exists():
@@ -61,20 +59,20 @@ class ClaudeCodeTarget(SyncTarget):
 
     def _migrate_repo_names(self, mapping: dict[str, str]) -> None:
         """Rename raw-named project dirs in the repo to their canonical names."""
-        projects_dir = self.repo_base / "claude" / "projects"
-        if not projects_dir.exists():
+        repo_projects_dir = self.repo_base / "claude" / "projects"
+        if not repo_projects_dir.exists():
             return
 
-        canonical_raws: dict[str, list[str]] = {}
+        raw_canonical_names: dict[str, list[str]] = {}
         for raw, canonical in mapping.items():
-            canonical_raws.setdefault(canonical, []).append(raw)
+            raw_canonical_names.setdefault(canonical, []).append(raw)
 
-        for canonical, raw_names in canonical_raws.items():
-            canonical_dir = projects_dir / canonical
+        for canonical, raw_names in raw_canonical_names.items():
+            canonical_dir = repo_projects_dir / canonical
             if canonical_dir.exists():
                 continue
             for raw_name in raw_names:
-                raw_dir = projects_dir / raw_name
+                raw_dir = repo_projects_dir / raw_name
                 if raw_dir.exists() and raw_dir.is_dir():
                     raw_dir.rename(canonical_dir)
                     log.info("Renamed repo dir: %s -> %s", raw_name, canonical)
@@ -86,10 +84,10 @@ class ClaudeCodeTarget(SyncTarget):
         Runs after Phase 1 migration, before Phase 3 sync.  Raises
         AssertionError on violation so callers can catch and log.
         """
-        projects_dir = self.repo_base / "claude" / "projects"
-        if not projects_dir.exists():
+        repo_projects_dir = self.repo_base / "claude" / "projects"
+        if not repo_projects_dir.exists():
             return
-        existing = {d.name for d in projects_dir.iterdir() if d.is_dir()}
+        existing = {d.name for d in repo_projects_dir.iterdir() if d.is_dir()}
         for raw in mapping:
             if raw in existing:
                 raise AssertionError(
@@ -146,7 +144,7 @@ class ClaudeCodeTarget(SyncTarget):
         return ProjectPair(
             local_memory=memory_dir,
             local_claude_md=local_claude_md,
-            repo_dir=canonical_dir,
+            canonical_dir=canonical_dir,
         )
 
     def _flag_unmapped(self, project_dir: Path) -> None:
@@ -156,7 +154,7 @@ class ClaudeCodeTarget(SyncTarget):
         if added:
             log.warning(
                 "Unmapped project: %s — recorded in %s. "
-                "Add a mapping in projects.conf to sync this project.",
+                "Add a mapping in projects.ini to sync this project.",
                 raw_name,
                 pending_path(self.repo_base),
             )
@@ -176,10 +174,10 @@ class ClaudeCodeTarget(SyncTarget):
 
     def _sync_project(self, pair: ProjectPair) -> None:
         """Sync a single mapped project's CLAUDE.md and memory/ dir."""
-        pair.repo_dir.mkdir(parents=True, exist_ok=True)
+        pair.canonical_dir.mkdir(parents=True, exist_ok=True)
         self._sync_file(
             pair.local_claude_md,
-            pair.repo_dir / "CLAUDE.md",
+            pair.canonical_dir / "CLAUDE.md",
             label=f"CLAUDE.md for {pair.local_claude_md.parent.name}",
         )
-        self._sync_dir(pair.local_memory, pair.repo_dir, label=pair.local_claude_md.parent.name)
+        self._sync_dir(pair.local_memory, pair.canonical_dir, label=pair.local_claude_md.parent.name)

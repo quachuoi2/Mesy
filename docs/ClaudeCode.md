@@ -282,7 +282,7 @@ given only in conversation are lost.
 
 - Auto memory is machine-local by design; Mesy is what shares it across computers.
 - The `<project>` directory name comes from the local repository path, so it differs
-  between computers. This is why `projects.conf` maps per-device names to canonical ones.
+  between computers. This is why `projects.ini` maps per-device names to canonical ones.
 - `~/.claude/memory/` is not a documented location. Claude Code does not load it.
 - Symlinked `~/.claude/CLAUDE.md` works in the CLI but is skipped in desktop Cowork sessions.
 - `MEMORY.md` beyond 200 lines or 25KB is silently dropped at load, including after a

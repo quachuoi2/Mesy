@@ -13,7 +13,7 @@ class TestSyncTargetABC:
     def test_cannot_instantiate_directly(self):
         """SyncTarget cannot be instantiated directly (it's an ABC)."""
         with pytest.raises(TypeError):
-            SyncTarget(name="test", source=Path("/tmp"), repo_dir=Path("/tmp/repo"))
+            SyncTarget(name="test", src=Path("/tmp"), target_dir=Path("/tmp/repo"))
 
     def test_subclass_must_implement_abstract_methods(self):
         """Subclass that doesn't implement all abstract methods cannot be instantiated."""
@@ -28,4 +28,4 @@ class TestSyncTargetABC:
             # Missing get_stage_dirs
 
         with pytest.raises(TypeError):
-            IncompleteTarget(name="incomplete", source=Path("/tmp"), repo_dir=Path("/tmp/repo"))
+            IncompleteTarget(name="incomplete", src=Path("/tmp"), target_dir=Path("/tmp/repo"))

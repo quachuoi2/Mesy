@@ -107,13 +107,13 @@ class TestEnsureRealDir:
 
     def test_symlink_to_existing_dir_materialises_files(self, tmp_path: Path) -> None:
         """Symlink to a real directory is replaced with a real dir; files are copied."""
-        target_dir = tmp_path / "canonical"
-        target_dir.mkdir()
-        (target_dir / "notes.md").write_text("# Notes")
-        (target_dir / "todo.md").write_text("# Todo")
+        canonical_dir = tmp_path / "canonical"
+        canonical_dir.mkdir()
+        (canonical_dir / "notes.md").write_text("# Notes")
+        (canonical_dir / "todo.md").write_text("# Todo")
 
         link = tmp_path / "memory"
-        link.symlink_to(target_dir)
+        link.symlink_to(canonical_dir)
         assert link.is_symlink()
 
         result = ensure_real_dir(link, repo_fallback=None)
@@ -128,15 +128,15 @@ class TestEnsureRealDir:
         self, tmp_path: Path
     ) -> None:
         """Subdirectories inside the target dir are not copied."""
-        target_dir = tmp_path / "canonical"
-        target_dir.mkdir()
-        (target_dir / "top.md").write_text("# Top")
-        subdir = target_dir / "sub"
+        canonical_dir = tmp_path / "canonical"
+        canonical_dir.mkdir()
+        (canonical_dir / "top.md").write_text("# Top")
+        subdir = canonical_dir / "sub"
         subdir.mkdir()
         (subdir / "nested.md").write_text("# Nested")
 
         link = tmp_path / "memory"
-        link.symlink_to(target_dir)
+        link.symlink_to(canonical_dir)
 
         ensure_real_dir(link, repo_fallback=None)
 
@@ -188,13 +188,13 @@ class TestEnsureRealDir:
         Implementation detail: shutil.copy2 is monkeypatched to raise after the
         first file so we simulate a mid-copy crash.
         """
-        target_dir = tmp_path / "canonical"
-        target_dir.mkdir()
-        (target_dir / "a.md").write_text("file A")
-        (target_dir / "b.md").write_text("file B")
+        canonical_dir = tmp_path / "canonical"
+        canonical_dir.mkdir()
+        (canonical_dir / "a.md").write_text("file A")
+        (canonical_dir / "b.md").write_text("file B")
 
         link = tmp_path / "memory"
-        link.symlink_to(target_dir)
+        link.symlink_to(canonical_dir)
 
         call_count = [0]
         original_copy2 = shutil.copy2

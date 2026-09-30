@@ -3,10 +3,10 @@ Description=Mesy - AI/Agent Memory Sync Daemon
 After=network-online.target
 
 [Service]
-ExecStart=/usr/bin/python3 %REPO_DIR%/sync.py
+ExecStart=/usr/bin/python3 %MESY_DIR%/sync.py
 Restart=on-failure
 RestartSec=10
-WorkingDirectory=%REPO_DIR%
+WorkingDirectory=%MESY_DIR%
 
 [Install]
 WantedBy=default.target

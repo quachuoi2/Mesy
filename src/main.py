@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from logging.handlers import RotatingFileHandler
 
-from src.config import REPO_DIR, load_repos
+from src.config import MESY_DIR, load_repos
 from src.cycle import first_sync
-from src.factory import RepoContext, build_repo_contexts
+from src.factory import RepoCtx, build_repo_ctxs
 from src.poll import run_with_polling
 from src.watch import run_with_watchdog
 
@@ -17,57 +17,57 @@ log = logging.getLogger("mesy")
 
 def main() -> None:
     _setup_logging()
-    repo_contexts = _load_repo_contexts()
-    _log_startup(repo_contexts)
-    for ctx in repo_contexts:
-        first_sync(ctx)
-    _watch(repo_contexts)
+    repo_ctxs = _load_repo_ctxs()
+    _log_startup(repo_ctxs)
+    for repo_ctx in repo_ctxs:
+        first_sync(repo_ctx)
+    _watch(repo_ctxs)
 
 
 def _setup_logging() -> None:
-    log_file = RotatingFileHandler(REPO_DIR / "log.log", maxBytes=1_000_000, backupCount=1, encoding="utf-8")
+    log_file = RotatingFileHandler(MESY_DIR / "log.log", maxBytes=1_000_000, backupCount=1, encoding="utf-8")
     logging.basicConfig(level=logging.INFO, format=LOG_FMT, handlers=[log_file])
 
 
-def _load_repo_contexts() -> list[RepoContext]:
+def _load_repo_ctxs() -> list[RepoCtx]:
     # Misconfiguration exits non-zero: a plain return reports success, and
     # systemd's Restart=on-failure would leave the daemon silently dead.
     repo_list = load_repos()
     if not repo_list:
         log.error(
-            "repos.conf not found or empty at %s — Mesy now requires a repos.conf with at least one [repo:*] section.",
-            REPO_DIR / "repos.conf",
+            "repos.ini not found or empty at %s — Mesy now requires a repos.ini with at least one [repo:*] section.",
+            MESY_DIR / "repos.ini",
         )
         raise SystemExit(1)
 
-    log.info("Loaded %d repo(s) from repos.conf", len(repo_list))
+    log.info("Loaded %d repo(s) from repos.ini", len(repo_list))
     try:
-        repo_contexts = build_repo_contexts(repo_list)
+        repo_ctxs = build_repo_ctxs(repo_list)
     except (ValueError, OSError) as exc:
         log.error("Configuration error: %s", exc)
         raise SystemExit(1) from None
 
-    if not any(ctx.targets for ctx in repo_contexts):
-        log.error("No targets configured in any sync.conf. Add [target:*] sections.")
+    if not any(repo_ctx.targets for repo_ctx in repo_ctxs):
+        log.error("No targets configured in any sync.ini. Add [target:*] sections.")
         raise SystemExit(1)
-    return repo_contexts
+    return repo_ctxs
 
 
-def _log_startup(repo_contexts: list[RepoContext]) -> None:
-    log.info("Mesy sync daemon starting (repo: %s)", REPO_DIR)
-    for ctx in repo_contexts:
+def _log_startup(repo_ctxs: list[RepoCtx]) -> None:
+    log.info("Mesy sync daemon starting (repo: %s)", MESY_DIR)
+    for repo_ctx in repo_ctxs:
         log.info(
-            "  [%s] data_dir=%s, targets=%s",
-            ctx.name,
-            ctx.data_dir,
-            ", ".join(t.name for t in ctx.targets),
+            "  [%s] repo_base=%s, targets=%s",
+            repo_ctx.name,
+            repo_ctx.repo_base,
+            ", ".join(t.name for t in repo_ctx.targets),
         )
 
 
-def _watch(repo_contexts: list[RepoContext]) -> None:
+def _watch(repo_ctxs: list[RepoCtx]) -> None:
     try:
         import watchdog  # noqa: F401
-        run_with_watchdog(repo_contexts)
+        run_with_watchdog(repo_ctxs)
     except ImportError:
         log.info("watchdog not installed, falling back to polling")
-        run_with_polling(repo_contexts)
+        run_with_polling(repo_ctxs)

@@ -9,52 +9,52 @@ from pathlib import Path
 log = logging.getLogger("mesy")
 
 
-def git(*args: str, data_dir: Path, check: bool = False) -> subprocess.CompletedProcess:
-    cmd = ["git", "-C", str(data_dir)] + list(args)
+def git(*args: str, repo_base: Path, check: bool = False) -> subprocess.CompletedProcess:
+    cmd = ["git", "-C", str(repo_base)] + list(args)
     log.debug("git %s", " ".join(args))
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=check)
 
 
-def has_local_changes(data_dir: Path) -> bool:
-    result = git("status", "--porcelain", data_dir=data_dir)
+def has_local_changes(repo_base: Path) -> bool:
+    result = git("status", "--porcelain", repo_base=repo_base)
     return bool(result.stdout.strip())
 
 
-def current_branch(data_dir: Path) -> str:
-    result = git("symbolic-ref", "--short", "HEAD", data_dir=data_dir)
+def current_branch(repo_base: Path) -> str:
+    result = git("symbolic-ref", "--short", "HEAD", repo_base=repo_base)
     return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else "main"
 
 
-def commit_and_push(stage_dirs: list[str], data_dir: Path) -> None:
+def commit_and_push(stage_dirs: list[str], repo_base: Path) -> None:
     """Stage changes, commit, rebase-pull, push.
 
     Args:
         stage_dirs: directories to git-add.
-        data_dir: root of the git repo to operate on.
+        repo_base: root of the git repo to operate on.
     """
-    if not _commit(stage_dirs, data_dir):
+    if not _commit(stage_dirs, repo_base):
         return
 
-    pull_remote(data_dir)
+    pull_remote(repo_base)
 
-    push_result = git("push", "origin", current_branch(data_dir), data_dir=data_dir)
+    push_result = git("push", "origin", current_branch(repo_base), repo_base=repo_base)
     if push_result.returncode != 0:
         log.warning("push failed (offline?): %s", push_result.stderr)
 
 
-def _commit(stage_dirs: list[str], data_dir: Path) -> bool:
+def _commit(stage_dirs: list[str], repo_base: Path) -> bool:
     """True when a new commit was made."""
-    if not has_local_changes(data_dir):
+    if not has_local_changes(repo_base):
         return False
 
-    git("add", *stage_dirs, data_dir=data_dir)
+    git("add", *stage_dirs, repo_base=repo_base)
 
-    result = git("diff", "--cached", "--quiet", data_dir=data_dir)
+    result = git("diff", "--cached", "--quiet", repo_base=repo_base)
     if result.returncode == 0:
         return False
 
-    msg = _commit_message(data_dir)
-    commit_result = git("commit", "-m", msg, data_dir=data_dir)
+    msg = _commit_message(repo_base)
+    commit_result = git("commit", "-m", msg, repo_base=repo_base)
     if commit_result.returncode != 0:
         log.warning("commit failed: %s", commit_result.stderr)
         return False
@@ -63,11 +63,11 @@ def _commit(stage_dirs: list[str], data_dir: Path) -> bool:
     return True
 
 
-def _commit_message(data_dir: Path) -> str:
+def _commit_message(repo_base: Path) -> str:
     hostname = socket.gethostname()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    name_status = git("diff", "--cached", "--name-status", data_dir=data_dir)
+    name_status = git("diff", "--cached", "--name-status", repo_base=repo_base)
     changed_lines = []
     for line in name_status.stdout.strip().splitlines():
         parts = line.split("\t", 1)
@@ -82,23 +82,23 @@ def _commit_message(data_dir: Path) -> str:
     return msg
 
 
-def resolve_conflicts(data_dir: Path) -> None:
+def resolve_conflicts(repo_base: Path) -> None:
     """Handle rebase conflicts by keeping both versions."""
-    result = git("diff", "--name-only", "--diff-filter=U", data_dir=data_dir)
+    result = git("diff", "--name-only", "--diff-filter=U", repo_base=repo_base)
     if not result.stdout.strip():
-        cont = git("rebase", "--continue", data_dir=data_dir)
-        if cont.returncode != 0:
-            git("rebase", "--abort", data_dir=data_dir)
+        continue_result = git("rebase", "--continue", repo_base=repo_base)
+        if continue_result.returncode != 0:
+            git("rebase", "--abort", repo_base=repo_base)
         return
 
     for filepath in result.stdout.strip().split("\n"):
-        _resolve_file(data_dir, filepath)
+        _resolve_file(repo_base, filepath)
 
-    git("rebase", "--continue", data_dir=data_dir)
+    git("rebase", "--continue", repo_base=repo_base)
 
 
-def _resolve_file(data_dir: Path, filepath: str) -> None:
-    full_path = data_dir / filepath
+def _resolve_file(repo_base: Path, filepath: str) -> None:
+    full_path = repo_base / filepath
     if not full_path.exists():
         return
 
@@ -107,7 +107,7 @@ def _resolve_file(data_dir: Path, filepath: str) -> None:
         return
 
     full_path.write_text(_flag_conflict(_replace_markers(content)))
-    git("add", filepath, data_dir=data_dir)
+    git("add", filepath, repo_base=repo_base)
 
 
 def _replace_markers(content: str) -> str:
@@ -138,12 +138,12 @@ def _flag_conflict(text: str) -> str:
     return text
 
 
-def pull_remote(data_dir: Path) -> None:
+def pull_remote(repo_base: Path) -> None:
     """Pull remote changes with rebase; resolve conflicts if the rebase stops."""
-    result = git("pull", "--rebase", "origin", current_branch(data_dir), data_dir=data_dir)
+    result = git("pull", "--rebase", "origin", current_branch(repo_base), repo_base=repo_base)
     if result.returncode == 0:
         if "Already up to date" not in result.stdout:
             log.info("Pulled remote changes")
         return
     log.debug("pull failed (offline?), attempting conflict resolution: %s", result.stderr)
-    resolve_conflicts(data_dir)
+    resolve_conflicts(repo_base)

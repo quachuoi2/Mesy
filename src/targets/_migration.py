@@ -26,14 +26,14 @@ class ProjectPair:
 
     local_memory: Path   # ~/.claude/projects/<raw>/memory
     local_claude_md: Path  # ~/.claude/projects/<raw>/CLAUDE.md
-    repo_dir: Path       # <data_repo>/claude/projects/<canonical>
+    canonical_dir: Path       # <data_repo>/claude/projects/<canonical>
 
 
 @dataclass
 class FilePair:
     """A single file matched between source and repo (GenericTarget)."""
 
-    source_file: Path
+    src_file: Path
     repo_file: Path
 
 
@@ -74,9 +74,9 @@ def ensure_real_file(path: Path, repo_fallback: Path | None) -> bool:
     return False
 
 
-def _replace_with_copy(path: Path, source: Path) -> None:
+def _replace_with_copy(path: Path, src: Path) -> None:
     tmp = path.parent / (path.name + ".mesy_tmp")
-    shutil.copy2(source, tmp)
+    shutil.copy2(src, tmp)
     path.unlink()
     tmp.rename(path)
 
@@ -96,8 +96,8 @@ def ensure_real_dir(path: Path, repo_fallback: Path | None) -> bool:
     if not path.is_symlink():
         return False
 
-    source_dir = _real_dir_source(path, repo_fallback)
-    if source_dir is None:
+    src_dir = _real_dir_src(path, repo_fallback)
+    if src_dir is None:
         path.unlink()
         log.warning(
             "ensure_real_dir: dangling symlink with no usable fallback, removed: %s",
@@ -107,7 +107,7 @@ def ensure_real_dir(path: Path, repo_fallback: Path | None) -> bool:
 
     tmp = path.parent / (path.name + ".mesy_tmp")
     tmp.mkdir(parents=True, exist_ok=True)
-    for item in source_dir.iterdir():
+    for item in src_dir.iterdir():
         if item.is_dir():
             continue
         shutil.copy2(item, tmp / item.name)
@@ -118,7 +118,7 @@ def ensure_real_dir(path: Path, repo_fallback: Path | None) -> bool:
     return True
 
 
-def _real_dir_source(path: Path, repo_fallback: Path | None) -> Path | None:
+def _real_dir_src(path: Path, repo_fallback: Path | None) -> Path | None:
     resolved = path.resolve()
     if resolved.exists() and resolved.is_dir():
         return resolved

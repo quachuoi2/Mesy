@@ -19,7 +19,7 @@ from src.targets._merge import merge_conflicting_file, split_frontmatter
 
 class TestGitHelper:
     def test_git_passes_correct_args(self, tmp_repo, monkeypatch):
-        """git() constructs the command with -C data_dir."""
+        """git() constructs the command with -C repo_base."""
         captured = []
 
         def fake_run(cmd, **kwargs):
@@ -29,7 +29,7 @@ class TestGitHelper:
         monkeypatch.setattr("subprocess.run", fake_run)
 
         from src.git_sync import git
-        git("status", "--porcelain", data_dir=tmp_repo)
+        git("status", "--porcelain", repo_base=tmp_repo)
 
         assert captured[0][0] == "git"
         assert captured[0][1] == "-C"
@@ -48,7 +48,7 @@ class TestGitHelper:
         monkeypatch.setattr("subprocess.run", fake_run)
 
         from src.git_sync import git
-        git("log", data_dir=tmp_repo)
+        git("log", repo_base=tmp_repo)
 
         assert kwargs_captured.get("timeout") == 30
 
@@ -60,7 +60,7 @@ class TestHasLocalChanges:
             "subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, " M some_file.md", ""),
         )
-        assert has_local_changes(data_dir=tmp_repo) is True
+        assert has_local_changes(repo_base=tmp_repo) is True
 
     def test_returns_false_when_clean(self, tmp_repo, monkeypatch):
         """has_local_changes() returns False when porcelain output is empty."""
@@ -68,7 +68,7 @@ class TestHasLocalChanges:
             "subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
         )
-        assert has_local_changes(data_dir=tmp_repo) is False
+        assert has_local_changes(repo_base=tmp_repo) is False
 
 
 class TestCommitAndPush:
@@ -91,7 +91,7 @@ class TestCommitAndPush:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        commit_and_push(["claude/global/", "claude/projects/"], data_dir=tmp_repo)
+        commit_and_push(["claude/global/", "claude/projects/"], repo_base=tmp_repo)
 
         git_subcommands = [c[3] for c in commands if c[0] == "git"]
         assert "add" in git_subcommands
@@ -114,7 +114,7 @@ class TestCommitAndPush:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        commit_and_push(["global/"], data_dir=tmp_repo)
+        commit_and_push(["global/"], repo_base=tmp_repo)
 
         # Only the status check should have run
         git_subcommands = [c[3] for c in commands if c[0] == "git"]
@@ -138,14 +138,14 @@ class TestCommitAndPush:
         monkeypatch.setattr("subprocess.run", fake_run)
 
         with caplog.at_level(logging.WARNING, logger="mesy"):
-            commit_and_push(["global/"], data_dir=tmp_repo)
+            commit_and_push(["global/"], repo_base=tmp_repo)
 
         assert any("push failed" in r.message for r in caplog.records)
 
-    def test_uses_provided_data_dir(self, tmp_path, monkeypatch):
-        """commit_and_push() passes the provided data_dir to git, not the global DATA_DIR."""
-        custom_data_dir = tmp_path / "CustomRepo"
-        custom_data_dir.mkdir()
+    def test_uses_provided_repo_base(self, tmp_path, monkeypatch):
+        """commit_and_push() passes the provided repo_base to git."""
+        custom_repo_base = tmp_path / "CustomRepo"
+        custom_repo_base.mkdir()
 
         used_dirs = []
 
@@ -161,9 +161,9 @@ class TestCommitAndPush:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        commit_and_push(["global/"], data_dir=custom_data_dir)
+        commit_and_push(["global/"], repo_base=custom_repo_base)
 
-        assert all(d == str(custom_data_dir) for d in used_dirs)
+        assert all(d == str(custom_repo_base) for d in used_dirs)
 
 
 class TestResolveConflicts:
@@ -178,7 +178,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        resolve_conflicts(data_dir=tmp_repo)
+        resolve_conflicts(repo_base=tmp_repo)
 
         subcommands = [c[3:] for c in commands if c[0] == "git"]
         assert ["rebase", "--continue"] in subcommands
@@ -196,7 +196,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        resolve_conflicts(data_dir=tmp_repo)
+        resolve_conflicts(repo_base=tmp_repo)
 
         subcommands = [c[3:] for c in commands if c[0] == "git"]
         assert ["rebase", "--abort"] in subcommands
@@ -217,7 +217,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        resolve_conflicts(data_dir=tmp_repo)
+        resolve_conflicts(repo_base=tmp_repo)
 
         content = conflicted_file.read_text()
         assert "<<<<<<<" not in content
@@ -240,7 +240,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        resolve_conflicts(data_dir=tmp_repo)
+        resolve_conflicts(repo_base=tmp_repo)
 
         subcommands = [c[3:] for c in commands if c[0] == "git"]
         assert ["rebase", "--continue"] in subcommands
@@ -257,7 +257,7 @@ class TestPullRemote:
         )
 
         with caplog.at_level(logging.INFO, logger="mesy"):
-            pull_remote(data_dir=tmp_repo)
+            pull_remote(repo_base=tmp_repo)
 
         assert any("Pulled" in r.message for r in caplog.records)
 
@@ -271,7 +271,7 @@ class TestPullRemote:
         )
 
         with caplog.at_level(logging.DEBUG, logger="mesy"):
-            pull_remote(data_dir=tmp_repo)  # must not raise
+            pull_remote(repo_base=tmp_repo)  # must not raise
 
         assert any("pull failed" in r.message for r in caplog.records)
 
@@ -290,7 +290,7 @@ class TestPullRemote:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
-        pull_remote(data_dir=tmp_repo)
+        pull_remote(repo_base=tmp_repo)
 
         assert "<<<<<<<" not in conflicted_file.read_text()
         assert ["rebase", "--continue"] in [c[3:] for c in commands]
@@ -300,23 +300,23 @@ class TestSplitFrontmatter:
     def test_parses_frontmatter(self):
         """split_frontmatter() extracts key:value pairs from YAML header."""
         text = "---\ntitle: hello\nconflict: true\n---\nbody text\n"
-        body, fm = split_frontmatter(text)
-        assert fm["title"] == "hello"
-        assert fm["conflict"] == "true"
+        body, frontmatter = split_frontmatter(text)
+        assert frontmatter["title"] == "hello"
+        assert frontmatter["conflict"] == "true"
         assert "body text" in body
 
     def test_no_frontmatter(self):
         """split_frontmatter() returns empty dict when there's no --- header."""
         text = "Just some plain text.\nNo frontmatter here.\n"
-        body, fm = split_frontmatter(text)
-        assert fm == {}
+        body, frontmatter = split_frontmatter(text)
+        assert frontmatter == {}
         assert body == text
 
     def test_incomplete_frontmatter(self):
         """split_frontmatter() handles malformed frontmatter gracefully."""
         text = "---\njust one delimiter\n"
-        body, fm = split_frontmatter(text)
-        assert fm == {}
+        body, frontmatter = split_frontmatter(text)
+        assert frontmatter == {}
         assert body == text
 
 

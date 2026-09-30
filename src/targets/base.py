@@ -17,26 +17,26 @@ class SyncTarget(ABC):
     """Base class for a sync target (e.g. Claude Code, OpenClaw)."""
 
     name: str
-    source: Path          # tool's directory (e.g. ~/.openclaw/workspace)
-    repo_dir: Path        # subdirectory in the data repo (e.g. AlfredMemory/openclaw/main)
-    data_dir: Path        # root of the data repo this target belongs to
+    src: Path          # tool's directory (e.g. ~/.openclaw/workspace)
+    target_dir: Path        # subdirectory in the data repo (e.g. AlfredMemory/openclaw/main)
+    repo_base: Path        # root of the data repo this target belongs to
     file_patterns: list[str]
     exclude: list[str]
 
     def __init__(
         self,
         name: str,
-        source: Path,
-        repo_dir: Path,
-        data_dir: Path | None = None,
+        src: Path,
+        target_dir: Path,
+        repo_base: Path | None = None,
         file_patterns: list[str] | None = None,
         exclude: list[str] | None = None,
         sync_mode: str = "symlink",
     ):
         self.name = name
-        self.source = source
-        self.repo_dir = repo_dir
-        self.data_dir = data_dir if data_dir is not None else repo_dir.parent
+        self.src = src
+        self.target_dir = target_dir
+        self.repo_base = repo_base if repo_base is not None else target_dir.parent
         self.file_patterns = file_patterns or ["*.md"]
         self.exclude = exclude or []
         self.sync_mode = sync_mode
@@ -53,7 +53,7 @@ class SyncTarget(ABC):
 
     @abstractmethod
     def get_stage_dirs(self) -> list[str]:
-        """Return git-add paths relative to data_dir for this target."""
+        """Return git-add paths relative to repo_base for this target."""
         ...
 
     def _sync_file(self, local: Path, repo: Path, label: str) -> None:
@@ -127,34 +127,34 @@ class SyncTarget(ABC):
             local.symlink_to(repo, target_is_directory=True)
             log.info("Symlinked %s (from repo)", label)
 
-    def _verify_migration(self, source_dir: Path, target_dir: Path) -> bool:
+    def _verify_migration(self, src_dir: Path, target_dir: Path) -> bool:
         """Check that every file in source_dir has a corresponding file in target_dir."""
-        return all_copied(source_dir, target_dir)
+        return all_copied(src_dir, target_dir)
 
 
 def _files(root: Path) -> list[Path]:
     return [f for f in root.rglob("*") if f.is_file()]
 
 
-def merge_into(src: Path, dst: Path) -> None:
-    """Copy files missing from dst; merge files that differ. Subfolders included."""
+def merge_into(src: Path, dest_dir: Path) -> None:
+    """Copy files missing from dest_dir; merge files that differ. Subfolders included."""
     for f in _files(src):
-        dest = dst / f.relative_to(src)
-        if not dest.exists():
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(f, dest)
-        elif not filecmp.cmp(f, dest, shallow=False):
-            merge_conflicting_file(local=f, repo=dest)
+        dest_file = dest_dir / f.relative_to(src)
+        if not dest_file.exists():
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dest_file)
+        elif not filecmp.cmp(f, dest_file, shallow=False):
+            merge_conflicting_file(local=f, repo=dest_file)
 
 
-def all_copied(src: Path, dst: Path) -> bool:
-    """True when every file under src also exists under dst."""
-    return all((dst / f.relative_to(src)).exists() for f in _files(src))
+def all_copied(src: Path, dest_dir: Path) -> bool:
+    """True when every file under src also exists under dest_dir."""
+    return all((dest_dir / f.relative_to(src)).exists() for f in _files(src))
 
 
-def _copy_missing(src: Path, dst: Path) -> None:
+def _copy_missing(src: Path, dest_dir: Path) -> None:
     for f in _files(src):
-        dest = dst / f.relative_to(src)
-        if not dest.exists():
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(f, dest)
+        dest_file = dest_dir / f.relative_to(src)
+        if not dest_file.exists():
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dest_file)

@@ -5,9 +5,9 @@ Run from inside the cloned Mesy repo on any new system:
     python setup.py
 
 Walks the user through registering one or more data repos in
-`REPO_DIR/repos.conf`, performs the initial filesystem migration
+`MESY_DIR/repos.ini`, performs the initial filesystem migration
 (Claude Code symlinks + generic targets) for each repo scoped to its
-own `sync.conf`, and installs the background daemon.
+own `sync.ini`, and installs the background daemon.
 """
 
 import filecmp
@@ -23,13 +23,13 @@ from configparser import ConfigParser
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import load_project_mappings, load_repos, load_config, load_targets
+from src.config import load_project_mappings, load_repos, load_sync_cfg, load_targets
 from src.pending import add_pending
 from src.targets._merge import split_frontmatter
 from src.targets.base import all_copied, merge_into
 
-REPO_DIR = Path(__file__).resolve().parent
-REPOS_CONF_PATH = REPO_DIR / "repos.conf"
+MESY_DIR = Path(__file__).resolve().parent
+REPOS_CFG_PATH = MESY_DIR / "repos.ini"
 IS_WINDOWS = platform.system() == "Windows"
 
 if IS_WINDOWS:
@@ -38,7 +38,7 @@ else:
     CLAUDE_DIR = Path.home() / ".claude"
 
 
-SYNC_CONF_TEMPLATE = """\
+SYNC_CFG_TEMPLATE = """\
 # Mesy per-repo sync config. See docs for full options.
 
 [mesy]
@@ -50,7 +50,7 @@ scan_interval_seconds = 60
 # [target:claude_code]
 # source = ~/.claude
 # repo_subdir = claude
-# mapping_conf = claude/projects.conf
+# mapping_cfg = claude/projects.ini
 # sync_mode = symlink
 
 # Example Codex target (uncomment to enable):
@@ -66,97 +66,97 @@ def log(tag: str, msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# repos.conf management
+# repos.ini management
 # ---------------------------------------------------------------------------
 
 
-def _read_repos_conf() -> ConfigParser:
-    cfg = ConfigParser()
-    if REPOS_CONF_PATH.exists():
-        cfg.read(REPOS_CONF_PATH)
-    return cfg
+def _read_repos_cfg() -> ConfigParser:
+    repos_cfg = ConfigParser()
+    if REPOS_CFG_PATH.exists():
+        repos_cfg.read(REPOS_CFG_PATH)
+    return repos_cfg
 
 
-def _write_repos_conf(cfg: ConfigParser) -> None:
-    with REPOS_CONF_PATH.open("w") as f:
-        cfg.write(f)
+def _write_repos_cfg(repos_cfg: ConfigParser) -> None:
+    with REPOS_CFG_PATH.open("w") as f:
+        repos_cfg.write(f)
 
 
-def _setup_git_sync(data_dir: Path) -> None:
-    """Prompt for a git remote URL and initialize sync for `data_dir`.
+def _setup_git_sync(repo_base: Path) -> None:
+    """Prompt for a git remote URL and initialize sync for `repo_base`.
 
     Skips if the directory is already a git repo. If the user gives a blank
     URL, warns that sync won't run until git is configured manually.
     """
-    if (data_dir / ".git").exists():
-        log("ok", f"{data_dir} is already a git repo — skipping remote setup")
+    if (repo_base / ".git").exists():
+        log("ok", f"{repo_base} is already a git repo — skipping remote setup")
         return
 
     url = input(
         "Git remote URL for this repo (e.g. git@github.com:you/repo.git, blank to skip): "
     ).strip()
     if not url:
-        log("warn", f"No remote configured — {data_dir} will not sync until you set one up")
+        log("warn", f"No remote configured — {repo_base} will not sync until you set one up")
         return
 
-    if not any(data_dir.iterdir()):
-        _clone(data_dir, url)
+    if not any(repo_base.iterdir()):
+        _clone(repo_base, url)
     else:
-        _init_with_remote(data_dir, url)
+        _init_with_remote(repo_base, url)
 
 
-def _clone(data_dir: Path, url: str) -> None:
-    data_dir.rmdir()
+def _clone(repo_base: Path, url: str) -> None:
+    repo_base.rmdir()
     result = subprocess.run(
-        ["git", "clone", url, str(data_dir)],
+        ["git", "clone", url, str(repo_base)],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
         log("error", f"git clone failed: {result.stderr.strip()}")
-        data_dir.mkdir(parents=True, exist_ok=True)
+        repo_base.mkdir(parents=True, exist_ok=True)
         return
-    log("ok", f"Cloned {url} into {data_dir}")
+    log("ok", f"Cloned {url} into {repo_base}")
 
 
-def _git(data_dir: Path, *args: str) -> subprocess.CompletedProcess:
+def _git(repo_base: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", "-C", str(data_dir), *args],
+        ["git", "-C", str(repo_base), *args],
         capture_output=True, text=True,
     )
 
 
-def _init_with_remote(data_dir: Path, url: str) -> None:
-    if _git(data_dir, "init").returncode != 0:
+def _init_with_remote(repo_base: Path, url: str) -> None:
+    if _git(repo_base, "init").returncode != 0:
         log("error", "git init failed")
         return
-    if _git(data_dir, "remote", "add", "origin", url).returncode != 0:
+    if _git(repo_base, "remote", "add", "origin", url).returncode != 0:
         log("error", "git remote add failed")
         return
 
-    fetch = _git(data_dir, "fetch", "origin")
+    fetch = _git(repo_base, "fetch", "origin")
     if fetch.returncode != 0:
         log("warn", f"git fetch failed: {fetch.stderr.strip()} — leaving repo initialized")
         return
 
     # Determine remote default branch (fall back to main).
-    head = _git(data_dir, "symbolic-ref", "refs/remotes/origin/HEAD")
+    head = _git(repo_base, "symbolic-ref", "refs/remotes/origin/HEAD")
     if head.returncode == 0 and head.stdout.strip():
         branch = head.stdout.strip().rsplit("/", 1)[-1]
     else:
         branch = "main"
 
-    _git(data_dir, "checkout", "-b", branch)
-    pull = _git(data_dir, "pull", "origin", branch, "--allow-unrelated-histories")
+    _git(repo_base, "checkout", "-b", branch)
+    pull = _git(repo_base, "pull", "origin", branch, "--allow-unrelated-histories")
     if pull.returncode != 0:
         log("warn", f"git pull failed: {pull.stderr.strip()}")
         return
 
-    _git(data_dir, "branch", f"--set-upstream-to=origin/{branch}", branch)
-    log("ok", f"Initialized {data_dir} with remote {url} (branch {branch})")
+    _git(repo_base, "branch", f"--set-upstream-to=origin/{branch}", branch)
+    log("ok", f"Initialized {repo_base} with remote {url} (branch {branch})")
 
 
 def _repo_path_valid(raw: str) -> Path | None:
-    """Resolve the user-provided path. Reject if it resolves inside REPO_DIR.
+    """Resolve the user-provided path. Reject if it resolves inside MESY_DIR.
 
     Returns the resolved Path on success, None on rejection (caller re-prompts).
     """
@@ -167,7 +167,7 @@ def _repo_path_valid(raw: str) -> Path | None:
         log("error", f"Cannot resolve path: {e}")
         return None
 
-    repo_resolved = REPO_DIR.resolve()
+    repo_resolved = MESY_DIR.resolve()
     try:
         resolved.relative_to(repo_resolved)
         log("error", f"Data repo path resolves inside the Mesy code dir: {resolved}")
@@ -178,8 +178,8 @@ def _repo_path_valid(raw: str) -> Path | None:
     return resolved
 
 
-def prompt_repos_conf() -> list[dict]:
-    """Show existing repos, let user add more, persist to repos.conf.
+def prompt_repos_cfg() -> list[dict]:
+    """Show existing repos, let user add more, persist to repos.ini.
 
     Returns the full list of repos (existing + new) as dicts with
     keys 'name' and 'path' (same shape as src.config.load_repos).
@@ -188,7 +188,7 @@ def prompt_repos_conf() -> list[dict]:
     if not _want_more_repos(existing):
         return existing
 
-    cfg = _read_repos_conf()
+    repos_cfg = _read_repos_cfg()
     existing_names = {r["name"] for r in existing}
     new_repos: list[dict] = []
 
@@ -199,7 +199,7 @@ def prompt_repos_conf() -> list[dict]:
         _setup_git_sync(resolved)
 
         section = f"repo:{name}"
-        cfg[section] = {"path": str(resolved)}
+        repos_cfg[section] = {"path": str(resolved)}
         new_repos.append({"name": name, "path": resolved})
         log("ok", f"Queued [{section}] path = {resolved}")
 
@@ -207,8 +207,8 @@ def prompt_repos_conf() -> list[dict]:
             break
 
     if new_repos:
-        _write_repos_conf(cfg)
-        log("ok", f"Wrote {len(new_repos)} new repo(s) to repos.conf")
+        _write_repos_cfg(repos_cfg)
+        log("ok", f"Wrote {len(new_repos)} new repo(s) to repos.ini")
 
     return existing + new_repos
 
@@ -217,7 +217,7 @@ def _want_more_repos(existing: list[dict]) -> bool:
     if not existing:
         print("No data repos registered yet. Add at least one.")
         return True
-    print(f"Found {len(existing)} repo(s) in repos.conf:")
+    print(f"Found {len(existing)} repo(s) in repos.ini:")
     for r in existing:
         print(f"  [{r['name']}] {r['path']}")
     return input("Add another data repo? [y/N]: ").strip().lower() == "y"
@@ -260,35 +260,35 @@ def _prompt_path() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# sync.conf handling (per-repo)
+# sync.ini handling (per-repo)
 # ---------------------------------------------------------------------------
 
 
-def ensure_sync_conf(data_dir: Path) -> bool:
-    """Verify data_dir has a sync.conf. Offer to create a template if missing.
+def ensure_sync_cfg(repo_base: Path) -> bool:
+    """Verify repo_base has a sync.ini. Offer to create a template if missing.
 
     Returns True if the file exists (or was created), False if the user
     declined and the repo should be skipped.
     """
-    sync_conf = data_dir / "sync.conf"
-    if sync_conf.exists():
+    sync_cfg_path = repo_base / "sync.ini"
+    if sync_cfg_path.exists():
         return True
 
-    log("warn", f"{sync_conf} is missing")
-    create = input("Create a template sync.conf? [Y/n]: ").strip().lower()
+    log("warn", f"{sync_cfg_path} is missing")
+    create = input("Create a template sync.ini? [Y/n]: ").strip().lower()
     if create in ("", "y"):
-        data_dir.mkdir(parents=True, exist_ok=True)
-        sync_conf.write_text(SYNC_CONF_TEMPLATE)
-        log("ok", f"Wrote template sync.conf to {sync_conf} — edit it before running the daemon")
+        repo_base.mkdir(parents=True, exist_ok=True)
+        sync_cfg_path.write_text(SYNC_CFG_TEMPLATE)
+        log("ok", f"Wrote template sync.ini to {sync_cfg_path} — edit it before running the daemon")
         return True
 
-    log("skip", f"Skipping {data_dir} — no sync.conf")
+    log("skip", f"Skipping {repo_base} — no sync.ini")
     return False
 
 
-def load_sync_conf_targets(data_dir: Path) -> list[dict]:
-    """Load target definitions from a repo's sync.conf."""
-    return load_targets(load_config(data_dir))
+def load_sync_cfg_targets(repo_base: Path) -> list[dict]:
+    """Load target definitions from a repo's sync.ini."""
+    return load_targets(load_sync_cfg(repo_base))
 
 
 # ---------------------------------------------------------------------------
@@ -304,14 +304,14 @@ def merge_conflicting_file(local: Path, repo: Path) -> None:
     local_content = local.read_text()
     repo_content = repo.read_text()
 
-    local_body, local_fm = split_frontmatter(local_content)
-    repo_body, repo_fm = split_frontmatter(repo_content)
+    local_body, local_frontmatter = split_frontmatter(local_content)
+    repo_body, repo_frontmatter = split_frontmatter(repo_content)
 
-    merged_fm = {**repo_fm, **local_fm, "conflict": "true"}
-    fm_lines = "\n".join(f"{k}: {v}" for k, v in merged_fm.items())
+    merged_frontmatter = {**repo_frontmatter, **local_frontmatter, "conflict": "true"}
+    frontmatter_lines = "\n".join(f"{k}: {v}" for k, v in merged_frontmatter.items())
 
     merged = (
-        f"---\n{fm_lines}\n---\n\n"
+        f"---\n{frontmatter_lines}\n---\n\n"
         f"<!-- CONFLICT ({now}): local ({hostname}) version -->\n"
         f"{local_body.strip()}\n\n"
         f"<!-- CONFLICT ({now}): repo version -->\n"
@@ -415,17 +415,17 @@ def _move_dir_into_repo(link: Path, target: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def migrate_repo_to_canonical(data_dir: Path, mapping: dict[str, str]) -> None:
+def migrate_repo_to_canonical(repo_base: Path, mapping: dict[str, str]) -> None:
     """Rename raw-named project dirs in the repo to their canonical names."""
-    projects_dir = data_dir / "claude" / "projects"
+    projects_dir = repo_base / "claude" / "projects"
     if not projects_dir.exists():
         return
 
-    canonical_raws: dict[str, list[str]] = {}
+    raw_canonical_names: dict[str, list[str]] = {}
     for raw, canonical in mapping.items():
-        canonical_raws.setdefault(canonical, []).append(raw)
+        raw_canonical_names.setdefault(canonical, []).append(raw)
 
-    for canonical, raw_names in canonical_raws.items():
+    for canonical, raw_names in raw_canonical_names.items():
         canonical_dir = projects_dir / canonical
         if canonical_dir.exists():
             continue
@@ -437,24 +437,24 @@ def migrate_repo_to_canonical(data_dir: Path, mapping: dict[str, str]) -> None:
                 break
 
 
-def setup_claude_code_symlinks(data_dir: Path) -> None:
+def setup_claude_code_symlinks(repo_base: Path) -> None:
     """Symlink the global CLAUDE.md, rules/ and each project's memory for one data repo."""
-    make_file_symlink(CLAUDE_DIR / "CLAUDE.md", data_dir / "claude" / "global" / "CLAUDE.md")
-    make_symlink(CLAUDE_DIR / "rules", data_dir / "claude" / "global" / "rules")
+    make_file_symlink(CLAUDE_DIR / "CLAUDE.md", repo_base / "claude" / "global" / "CLAUDE.md")
+    make_symlink(CLAUDE_DIR / "rules", repo_base / "claude" / "global" / "rules")
 
-    mapping = load_project_mappings(data_dir)
-    migrate_repo_to_canonical(data_dir, mapping)
+    mapping = load_project_mappings(repo_base)
+    migrate_repo_to_canonical(repo_base, mapping)
 
     claude_projects_dir = CLAUDE_DIR / "projects"
     if claude_projects_dir.exists():
         for project_dir in claude_projects_dir.iterdir():
             if project_dir.is_dir():
-                _link_project(data_dir, project_dir, mapping)
+                _link_project(repo_base, project_dir, mapping)
 
-    _prelink_mapped(data_dir, claude_projects_dir, mapping)
+    _prelink_mapped(repo_base, claude_projects_dir, mapping)
 
 
-def _link_project(data_dir: Path, project_dir: Path, mapping: dict[str, str]) -> None:
+def _link_project(repo_base: Path, project_dir: Path, mapping: dict[str, str]) -> None:
     raw_name = project_dir.name
     memory_path = project_dir / "memory"
 
@@ -462,20 +462,20 @@ def _link_project(data_dir: Path, project_dir: Path, mapping: dict[str, str]) ->
         return
 
     if raw_name in mapping:
-        _link_to_canonical(project_dir, data_dir / "claude" / "projects" / mapping[raw_name])
+        _link_to_canonical(project_dir, repo_base / "claude" / "projects" / mapping[raw_name])
     elif memory_path.is_dir():
-        add_pending(data_dir, raw_name)
+        add_pending(repo_base, raw_name)
         log("pending", f"{raw_name} has no mapping — recorded in .pending file")
-        log("info", f"  Add to projects.conf: [YourProjectName] / paths = {raw_name}")
+        log("info", f"  Add to projects.ini: [YourProjectName] / paths = {raw_name}")
 
 
-def _prelink_mapped(data_dir: Path, claude_projects_dir: Path, mapping: dict[str, str]) -> None:
+def _prelink_mapped(repo_base: Path, claude_projects_dir: Path, mapping: dict[str, str]) -> None:
     for raw_name, canonical in mapping.items():
         claude_project_dir = claude_projects_dir / raw_name
         memory_path = claude_project_dir / "memory"
         if memory_path.exists():
             continue
-        canonical_dir = data_dir / "claude" / "projects" / canonical
+        canonical_dir = repo_base / "claude" / "projects" / canonical
         if canonical_dir.exists():
             claude_project_dir.mkdir(parents=True, exist_ok=True)
             _link_to_canonical(claude_project_dir, canonical_dir)
@@ -490,18 +490,18 @@ def _link_to_canonical(project_dir: Path, canonical_dir: Path) -> None:
     )
 
 
-def setup_generic_target(data_dir: Path, name: str, source: Path, repo_subdir: str,
+def setup_generic_target(repo_base: Path, name: str, src: Path, repo_subdir: str,
                          file_patterns: list[str], exclude: list[str]) -> None:
     """Set up a generic sync target: copy files into repo, replace with symlinks."""
-    repo_dir = data_dir / repo_subdir
+    target_dir = repo_base / repo_subdir
 
-    if not source.exists():
+    if not src.exists():
         log("skip", f"[{name}] Source {source} does not exist")
         return
 
-    log("info", f"[{name}] Setting up: {source} -> {repo_dir}")
-    repo_dir.mkdir(parents=True, exist_ok=True)
-    _adopt_dir(source, repo_dir, name, file_patterns, exclude)
+    log("info", f"[{name}] Setting up: {source} -> {target_dir}")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    _adopt_dir(src, target_dir, name, file_patterns, exclude)
 
 
 def _adopt_dir(src: Path, dest: Path, name: str, file_patterns: list[str], exclude: list[str]) -> None:
@@ -567,59 +567,59 @@ def _link_repo_item(repo_file: Path, src: Path, name: str, file_patterns: list[s
     log("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
 
 
-def setup_repo(data_dir: Path, seen_target_types: set[str]) -> None:
+def setup_repo(repo_base: Path, seen_target_types: set[str]) -> None:
     """Run the per-repo migration: Claude Code + generic targets.
 
     `seen_target_types` is mutated to track which target types have already
     been claimed by an earlier repo. Duplicates across repos are skipped
     with a warning.
     """
-    for tdef in load_sync_conf_targets(data_dir):
-        if not _claim_target(tdef, seen_target_types):
+    for target_def in load_sync_cfg_targets(repo_base):
+        if not _claim_target(target_def, seen_target_types):
             continue
-        if tdef["type"] == "codex":
-            _setup_codex(tdef, data_dir)
-        elif tdef["type"] == "claude-code":
-            print(f"--- Claude Code ({data_dir.name}) ---")
-            setup_claude_code_symlinks(data_dir)
-        elif tdef["type"] == "generic":
-            _setup_generic(tdef, data_dir)
+        if target_def["type"] == "codex":
+            _setup_codex(target_def, repo_base)
+        elif target_def["type"] == "claude-code":
+            print(f"--- Claude Code ({repo_base.name}) ---")
+            setup_claude_code_symlinks(repo_base)
+        elif target_def["type"] == "generic":
+            _setup_generic(target_def, repo_base)
 
 
-def _claim_target(tdef: dict, seen_target_types: set[str]) -> bool:
-    ttype = tdef["type"]
+def _claim_target(target_def: dict, seen_target_types: set[str]) -> bool:
+    target_type = target_def["type"]
     # Legacy Claude setup always claims the same ~/.claude directory.
     # Generic and Codex instances are deduplicated by source ownership instead.
-    key = ttype if ttype == "claude-code" else f"{ttype}:{tdef['source'].absolute()}"
+    key = target_type if target_type == "claude-code" else f"{target_type}:{target_def['source'].absolute()}"
     if key in seen_target_types:
-        log("warn", f"[{tdef['name']}] target type '{ttype}' already handled by an earlier repo — skipping")
+        log("warn", f"[{target_def['name']}] target type '{target_type}' already handled by an earlier repo — skipping")
         return False
     seen_target_types.add(key)
     return True
 
 
-def _setup_codex(tdef: dict, data_dir: Path) -> None:
+def _setup_codex(target_def: dict, repo_base: Path) -> None:
     from src.factory import build_targets
-    print(f"--- {tdef['name']} ({data_dir.name}) ---")
-    build_targets([tdef], data_dir)[0].setup()
+    print(f"--- {target_def['name']} ({repo_base.name}) ---")
+    build_targets([target_def], repo_base)[0].setup()
 
 
-def _setup_generic(tdef: dict, data_dir: Path) -> None:
-    if tdef.get("sync_mode") == "copy":
+def _setup_generic(target_def: dict, repo_base: Path) -> None:
+    if target_def.get("sync_mode") == "copy":
         log(
             "info",
-            f"[{tdef['name']}] Copy-mode target — skipping symlink setup. "
+            f"[{target_def['name']}] Copy-mode target — skipping symlink setup. "
             "Will be initialized on first daemon run.",
         )
         return
-    print(f"--- {tdef['name']} ({data_dir.name}) ---")
+    print(f"--- {target_def['name']} ({repo_base.name}) ---")
     setup_generic_target(
-        data_dir=data_dir,
-        name=tdef["name"],
-        source=tdef["source"],
-        repo_subdir=tdef["repo_subdir"],
-        file_patterns=tdef["file_patterns"],
-        exclude=tdef["exclude"],
+        repo_base=repo_base,
+        name=target_def["name"],
+        src=target_def["source"],
+        repo_subdir=target_def["repo_subdir"],
+        file_patterns=target_def["file_patterns"],
+        exclude=target_def["exclude"],
     )
 
 
@@ -630,7 +630,7 @@ def _setup_generic(tdef: dict, data_dir: Path) -> None:
 
 def install_systemd_service() -> None:
     """Install and enable the systemd user service (Linux only)."""
-    service_template = REPO_DIR / "mesy.service"
+    service_template = MESY_DIR / "mesy.service"
     if not service_template.exists():
         log("skip", "Service template not found")
         return
@@ -638,7 +638,7 @@ def install_systemd_service() -> None:
     user_service_dir = Path.home() / ".config" / "systemd" / "user"
     user_service_dir.mkdir(parents=True, exist_ok=True)
 
-    service_content = service_template.read_text().replace("%REPO_DIR%", str(REPO_DIR))
+    service_content = service_template.read_text().replace("%MESY_DIR%", str(MESY_DIR))
     dest = user_service_dir / "mesy.service"
     dest.write_text(service_content)
 
@@ -665,7 +665,7 @@ def install_task_scheduler(python_exe: str) -> None:
     creates a per-user ONLOGON task without elevation.
     """
     task_name = "Mesy"
-    sync_script = REPO_DIR / "sync.py"
+    sync_script = MESY_DIR / "sync.py"
 
     ps_script = (
         f'$action = New-ScheduledTaskAction -Execute \'"{python_exe}"\' -Argument \'"{sync_script}"\';'
@@ -710,11 +710,11 @@ def install_daemon() -> None:
 def main() -> None:
     print("=== Mesy: Multi-Target Memory Sync Setup ===")
     print(f"Platform: {platform.system()}")
-    print(f"Repo:     {REPO_DIR}")
+    print(f"Repo:     {MESY_DIR}")
     print(f"Claude:   {CLAUDE_DIR}")
     print()
 
-    repos = prompt_repos_conf()
+    repos = prompt_repos_cfg()
     if not repos:
         raise SystemExit("[error] No data repos registered; aborting.")
 
@@ -737,15 +737,15 @@ def main() -> None:
 def _setup_repos(repos: list[dict]) -> None:
     seen_target_types: set[str] = set()
     # Validate every configured target before any repository is migrated.
-    from src.main import LOG_FMT, build_repo_contexts
+    from src.main import LOG_FMT, build_repo_ctxs
     logging.basicConfig(level=logging.INFO, format=LOG_FMT)
-    build_repo_contexts(repos)
+    build_repo_ctxs(repos)
     for repo in repos:
-        data_dir = repo["path"]
-        print(f"\n=== Repo: {repo['name']} ({data_dir}) ===")
-        if not ensure_sync_conf(data_dir):
+        repo_base = repo["path"]
+        print(f"\n=== Repo: {repo['name']} ({repo_base}) ===")
+        if not ensure_sync_cfg(repo_base):
             continue
-        setup_repo(data_dir, seen_target_types)
+        setup_repo(repo_base, seen_target_types)
 
 
 if __name__ == "__main__":

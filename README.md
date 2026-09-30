@@ -23,7 +23,7 @@ Device A                          GitHub (private)            Device B
 Mesy/                          # This repo — code only, no memory
 ├── sync.py                    # Entry point — run this
 ├── setup.py                   # Interactive onboarding (Linux/Windows/WSL)
-├── repos.conf                 # REQUIRED — list of data repos (gitignored)
+├── repos.ini                 # REQUIRED — list of data repos (gitignored)
 ├── mesy.service               # Systemd unit template
 ├── src/                       # Daemon code
 ├── tests/                     # pytest suite
@@ -34,11 +34,11 @@ A data repo (e.g. `AlfredMemory`) looks like:
 
 ```
 AlfredMemory/
-├── sync.conf                  # Timing + [target:*] definitions
+├── sync.ini                  # Timing + [target:*] definitions
 ├── claude/
 │   ├── global/CLAUDE.md       # Linked to ~/.claude/CLAUDE.md
 │   ├── global/rules/          # Linked to ~/.claude/rules/
-│   ├── projects.conf          # Canonical project name mappings
+│   ├── projects.ini          # Canonical project name mappings
 │   └── projects/              # Synced Claude Code memory
 │       └── .pending           # Unmapped projects awaiting a mapping
 └── openclaw/main/             # Synced OpenClaw memory
@@ -56,17 +56,17 @@ AlfredMemory/
    python3 setup.py
    ```
 
-`setup.py` prompts for each data repo's name, local path, and git remote, writes `repos.conf`, offers a template `sync.conf`, then migrates existing memory and installs the daemon.
+`setup.py` prompts for each data repo's name, local path, and git remote, writes `repos.ini`, offers a template `sync.ini`, then migrates existing memory and installs the daemon.
 
-3. Edit the data repo's `sync.conf` targets and `claude/projects.conf` mappings, then restart the daemon.
+3. Edit the data repo's `sync.ini` targets and `claude/projects.ini` mappings, then restart the daemon.
 
 ### Every additional device
 
-Same commands. Point setup at the same data repo URL; it clones and symlinks in place. Add this device's raw project names to `claude/projects.conf` (see below).
+Same commands. Point setup at the same data repo URL; it clones and symlinks in place. Add this device's raw project names to `claude/projects.ini` (see below).
 
 ## Configuration
 
-### `repos.conf` (Mesy root, required)
+### `repos.ini` (Mesy root, required)
 
 Daemon exits if this is missing or empty.
 
@@ -78,7 +78,7 @@ path = /home/you/Workspace/AlfredMemory
 path = /home/you/Workspace/Note/DMServer
 ```
 
-### `sync.conf` (inside each data repo)
+### `sync.ini` (inside each data repo)
 
 ```ini
 [mesy]
@@ -89,7 +89,7 @@ scan_interval_seconds = 600  # How often to scan for new projects
 [target:claude-code]
 source = ~/.claude/projects
 repo_subdir = claude/projects
-mapping_conf = claude/projects.conf   # Presence of this key = claude-code target
+mapping_cfg = claude/projects.ini   # Presence of this key = claude-code target
 
 [target:openclaw]
 source = ~/.openclaw/workspace
@@ -131,7 +131,7 @@ Nothing is lost in a conflict. Both versions are merged into **one file**, wrapp
 
 ## Project Name Mapping (Claude Code)
 
-Claude Code encodes the working directory into the memory folder name (`/home/you/Workspace` → `-home-you-Workspace`), so the same project has a different name on each device. `<data_repo>/claude/projects.conf` maps them to one canonical name:
+Claude Code encodes the working directory into the memory folder name (`/home/you/Workspace` → `-home-you-Workspace`), so the same project has a different name on each device. `<data_repo>/claude/projects.ini` maps them to one canonical name:
 
 ```ini
 [Workspace]

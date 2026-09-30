@@ -5,7 +5,7 @@ Format (single file at ``<repo>/claude/projects/.pending``):
     source: <hostname>
     discovered: <iso-utc>
 
-    Add a mapping in projects.conf:
+    Add a mapping in projects.ini:
       [YourProjectName]
       paths = <raw_name_1>
 
@@ -15,7 +15,7 @@ Format (single file at ``<repo>/claude/projects/.pending``):
 The header records the most recent discovery (host + timestamp).  Each
 unmapped project contributes one ``[YourProjectName] / paths = <raw>``
 snippet, deduplicated by raw name.  When a mapping is added in
-projects.conf, ``prune_pending`` removes the matching snippet; when no
+projects.ini, ``prune_pending`` removes the matching snippet; when no
 snippets remain the file is deleted.
 """
 
@@ -55,7 +55,7 @@ def _render(raw_names: list[str], hostname: str, now_iso: str) -> str:
         f"source: {hostname}\n"
         f"discovered: {now_iso}\n"
         f"\n"
-        f"Add a mapping in projects.conf:\n"
+        f"Add a mapping in projects.ini:\n"
         f"{snippets}\n"
     )
 

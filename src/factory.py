@@ -1,4 +1,4 @@
-"""Builds each data repo's targets from its sync.conf."""
+"""Builds each data repo's targets from its sync.ini."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.config import get_mesy_settings, load_config, load_targets
+from src.config import get_mesy_settings, load_sync_cfg, load_targets
 from src.targets.base import SyncTarget
 from src.targets.claude_code import ClaudeCodeTarget
 from src.targets.codex import CodexTarget
@@ -17,30 +17,30 @@ log = logging.getLogger("mesy")
 
 
 @dataclass
-class RepoContext:
+class RepoCtx:
     """Bundles everything the daemon needs to manage one data repo."""
 
     name: str
-    data_dir: Path
+    repo_base: Path
     targets: list[SyncTarget] = field(default_factory=list)
     stage_dirs: list[str] = field(default_factory=list)
     settings: dict = field(default_factory=dict)
 
 
-def build_repo_contexts(repo_list: list[dict]) -> list[RepoContext]:
-    """Build RepoContext objects from a list of repo dicts (from load_repos())."""
-    return [_build_context(repo_info) for repo_info in repo_list]
+def build_repo_ctxs(repo_list: list[dict]) -> list[RepoCtx]:
+    """Build RepoCtx objects from a list of repo dicts (from load_repos())."""
+    return [_build_ctx(repo_info) for repo_info in repo_list]
 
 
-def _build_context(repo_info: dict) -> RepoContext:
-    data_dir = repo_info["path"]
-    cfg = load_config(data_dir)
-    settings = get_mesy_settings(cfg)
+def _build_ctx(repo_info: dict) -> RepoCtx:
+    repo_base = repo_info["path"]
+    sync_cfg = load_sync_cfg(repo_base)
+    settings = get_mesy_settings(sync_cfg)
     _check_timings(repo_info["name"], settings)
-    targets = build_targets(load_targets(cfg), data_dir)
-    return RepoContext(
+    targets = build_targets(load_targets(sync_cfg), repo_base)
+    return RepoCtx(
         name=repo_info["name"],
-        data_dir=data_dir,
+        repo_base=repo_base,
         targets=targets,
         stage_dirs=get_all_stage_dirs(targets),
         settings=settings,
@@ -58,33 +58,33 @@ def _check_timings(repo_name: str, settings: dict) -> None:
             raise ValueError(f"[{repo_name}] {key} must be a finite positive number, got {settings[key]!r}")
 
 
-def _codex_target(tdef: dict, repo_dir: Path, data_dir: Path, sync_mode: str) -> SyncTarget:
+def _codex_target(target_def: dict, target_dir: Path, repo_base: Path, sync_mode: str) -> SyncTarget:
     return CodexTarget(
-        name=tdef["name"],
-        source=tdef["source"],
-        repo_dir=repo_dir,
-        data_dir=data_dir,
+        name=target_def["name"],
+        src=target_def["source"],
+        target_dir=target_dir,
+        repo_base=repo_base,
         sync_mode=sync_mode,
     )
 
 
-def _claude_code_target(tdef: dict, repo_dir: Path, data_dir: Path, sync_mode: str) -> SyncTarget:
+def _claude_code_target(target_def: dict, target_dir: Path, repo_base: Path, sync_mode: str) -> SyncTarget:
     return ClaudeCodeTarget(
-        source=tdef["source"],
-        repo_dir=repo_dir,
-        data_dir=data_dir,
+        src=target_def["source"],
+        target_dir=target_dir,
+        repo_base=repo_base,
         sync_mode=sync_mode,
     )
 
 
-def _generic_target(tdef: dict, repo_dir: Path, data_dir: Path, sync_mode: str) -> SyncTarget:
+def _generic_target(target_def: dict, target_dir: Path, repo_base: Path, sync_mode: str) -> SyncTarget:
     return GenericTarget(
-        name=tdef["name"],
-        source=tdef["source"],
-        repo_dir=repo_dir,
-        data_dir=data_dir,
-        file_patterns=tdef.get("file_patterns", ["*.md"]),
-        exclude=tdef.get("exclude", []),
+        name=target_def["name"],
+        src=target_def["source"],
+        target_dir=target_dir,
+        repo_base=repo_base,
+        file_patterns=target_def.get("file_patterns", ["*.md"]),
+        exclude=target_def.get("exclude", []),
         sync_mode=sync_mode,
     )
 
@@ -96,23 +96,23 @@ _BUILDERS = {
 }
 
 
-def build_targets(target_defs: list[dict], data_dir: Path) -> list[SyncTarget]:
+def build_targets(target_defs: list[dict], repo_base: Path) -> list[SyncTarget]:
     """Instantiate SyncTarget objects from config definitions.
 
     Args:
         target_defs: parsed target definitions from load_targets().
-        data_dir: the data repo root — passed to each target so it can
+        repo_base: the data repo root — passed to each target so it can
             compute stage dirs and hash file paths without touching globals.
     """
     targets = []
-    for tdef in target_defs:
-        repo_dir = data_dir / tdef["repo_subdir"]
-        sync_mode = tdef.get("sync_mode", "symlink")
-        builder = _BUILDERS.get(tdef["type"])
+    for target_def in target_defs:
+        target_dir = repo_base / target_def["repo_subdir"]
+        sync_mode = target_def.get("sync_mode", "symlink")
+        builder = _BUILDERS.get(target_def["type"])
         if builder is None:
-            log.warning("Unknown target type: %s", tdef["type"])
+            log.warning("Unknown target type: %s", target_def["type"])
             continue
-        targets.append(builder(tdef, repo_dir, data_dir, sync_mode))
+        targets.append(builder(target_def, target_dir, repo_base, sync_mode))
     return targets
 
 

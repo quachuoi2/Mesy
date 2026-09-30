@@ -9,37 +9,37 @@ from pathlib import Path
 
 log = logging.getLogger("mesy")
 
-REPO_DIR = Path(__file__).resolve().parent.parent
-REPOS_CONF_PATH = REPO_DIR / "repos.conf"
+MESY_DIR = Path(__file__).resolve().parent.parent
+REPOS_CFG_PATH = MESY_DIR / "repos.ini"
 
 
 def load_repos() -> list[dict]:
-    """Parse repos.conf and return a list of repo dicts.
+    """Parse repos.ini and return a list of repo dicts.
 
     Each dict has keys: name (str), path (Path). Returns an empty list if
-    repos.conf does not exist — the daemon requires at least one [repo:*]
+    repos.ini does not exist — the daemon requires at least one [repo:*]
     section and will exit if the list is empty.
     """
-    if not REPOS_CONF_PATH.exists():
+    if not REPOS_CFG_PATH.exists():
         return []
 
-    cfg = ConfigParser()
-    cfg.read(REPOS_CONF_PATH)
+    repos_cfg = ConfigParser()
+    repos_cfg.read(REPOS_CFG_PATH)
 
-    repos = [_parse_repo(cfg, section) for section in cfg.sections() if section.startswith("repo:")]
+    repos = [_parse_repo(repos_cfg, section) for section in repos_cfg.sections() if section.startswith("repo:")]
     return [repo for repo in repos if repo is not None]
 
 
-def _parse_repo(cfg: ConfigParser, section: str) -> dict | None:
+def _parse_repo(repos_cfg: ConfigParser, section: str) -> dict | None:
     name = section.split(":", 1)[1].strip()
-    raw_path = cfg.get(section, "path", fallback="").strip()
+    raw_path = repos_cfg.get(section, "path", fallback="").strip()
     if not raw_path:
-        log.warning("[repos.conf] Section [%s] has no 'path' key, skipping", section)
+        log.warning("[repos.ini] Section [%s] has no 'path' key, skipping", section)
         return None
     path = Path(raw_path).expanduser().resolve()
     if not path.is_dir():
         log.warning(
-            "[repos.conf] Repo '%s' path=%s is not a valid directory, skipping",
+            "[repos.ini] Repo '%s' path=%s is not a valid directory, skipping",
             name,
             path,
         )
@@ -47,40 +47,40 @@ def _parse_repo(cfg: ConfigParser, section: str) -> dict | None:
     return {"name": name, "path": path}
 
 
-def load_config(data_dir: Path) -> ConfigParser:
-    """Load sync.conf from data_dir and return the full ConfigParser."""
-    config_path = data_dir / "sync.conf"
+def load_sync_cfg(repo_base: Path) -> ConfigParser:
+    """Load sync.ini from repo_base and return the full ConfigParser."""
+    sync_cfg_path = repo_base / "sync.ini"
     defaults = {
         "debounce_seconds": "30",
         "pull_interval_seconds": "60",
         "scan_interval_seconds": "60",
     }
-    cfg = ConfigParser()
-    cfg.read_dict({"mesy": defaults})
-    if config_path.exists():
-        cfg.read(config_path)
-    return cfg
+    sync_cfg = ConfigParser()
+    sync_cfg.read_dict({"mesy": defaults})
+    if sync_cfg_path.exists():
+        sync_cfg.read(sync_cfg_path)
+    return sync_cfg
 
 
-def get_mesy_settings(cfg: ConfigParser) -> dict:
+def get_mesy_settings(sync_cfg: ConfigParser) -> dict:
     """Extract the [mesy] section as a dict."""
-    return dict(cfg["mesy"])
+    return dict(sync_cfg["mesy"])
 
 
-def load_project_mappings(data_dir: Path) -> dict[str, str]:
+def load_project_mappings(repo_base: Path) -> dict[str, str]:
     """Claude Code memory config loading"""
-    """Load projects.conf from data_dir and return {raw_claude_name: canonical_name} mapping."""
-    projects_conf = data_dir / "claude" / "projects.conf"
+    """Load projects.ini from repo_base and return {raw_claude_name: canonical_name} mapping."""
+    projects_cfg_path = repo_base / "claude" / "projects.ini"
     mapping = {}
-    if not projects_conf.exists():
+    if not projects_cfg_path.exists():
         return mapping
-    cfg = ConfigParser()
-    cfg.read(projects_conf)
-    for section in cfg.sections():
+    projects_cfg = ConfigParser()
+    projects_cfg.read(projects_cfg_path)
+    for section in projects_cfg.sections():
         if section == "mesy":
             continue
         canonical = section
-        paths_str = cfg.get(section, "paths", fallback="")
+        paths_str = projects_cfg.get(section, "paths", fallback="")
         for raw_name in paths_str.split(","):
             raw_name = raw_name.strip()
             if raw_name:
@@ -88,55 +88,55 @@ def load_project_mappings(data_dir: Path) -> dict[str, str]:
     return mapping
 
 
-def load_targets(cfg: ConfigParser) -> list[dict]:
+def load_targets(sync_cfg: ConfigParser) -> list[dict]:
     """Parse [target:*] sections from config into target definitions.
 
     Returns a list of dicts with keys: name, type, source, repo_subdir,
-    and optional: mapping_conf, file_patterns, exclude, sync_mode.
+    and optional: mapping_cfg, file_patterns, exclude, sync_mode.
     """
-    return [_parse_target(cfg, section) for section in cfg.sections() if section.startswith("target:")]
+    return [_parse_target(sync_cfg, section) for section in sync_cfg.sections() if section.startswith("target:")]
 
 
-def _parse_target(cfg: ConfigParser, section: str) -> dict:
+def _parse_target(sync_cfg: ConfigParser, section: str) -> dict:
     name = section.split(":", 1)[1]
     target_def = {"name": name}
-    target_def["type"] = _target_type(cfg, section)
-    target_def["source"] = _target_source(cfg, section, target_def["type"])
-    target_def["repo_subdir"] = cfg.get(section, "repo_subdir")
-    if cfg.has_option(section, "mapping_conf"):
-        target_def["mapping_conf"] = cfg.get(section, "mapping_conf")
-    target_def["file_patterns"] = _list_option(cfg, section, "file_patterns", ["*.md"])
-    target_def["exclude"] = _list_option(cfg, section, "exclude", [])
-    target_def["sync_mode"] = _sync_mode(cfg, section, name)
+    target_def["type"] = _target_type(sync_cfg, section)
+    target_def["source"] = _target_src(sync_cfg, section, target_def["type"])
+    target_def["repo_subdir"] = sync_cfg.get(section, "repo_subdir")
+    if sync_cfg.has_option(section, "mapping_cfg"):
+        target_def["mapping_cfg"] = sync_cfg.get(section, "mapping_cfg")
+    target_def["file_patterns"] = _list_option(sync_cfg, section, "file_patterns", ["*.md"])
+    target_def["exclude"] = _list_option(sync_cfg, section, "exclude", [])
+    target_def["sync_mode"] = _sync_mode(sync_cfg, section, name)
     return target_def
 
 
-def _target_type(cfg: ConfigParser, section: str) -> str:
-    inferred_type = "claude-code" if cfg.has_option(section, "mapping_conf") else "generic"
-    target_type = cfg.get(section, "type", fallback=inferred_type).strip()
+def _target_type(sync_cfg: ConfigParser, section: str) -> str:
+    inferred_type = "claude-code" if sync_cfg.has_option(section, "mapping_cfg") else "generic"
+    target_type = sync_cfg.get(section, "type", fallback=inferred_type).strip()
     if target_type not in {"claude-code", "generic", "codex"}:
         raise ValueError(f"[{section}] Unknown target type: {target_type}")
     return target_type
 
 
-def _target_source(cfg: ConfigParser, section: str, target_type: str) -> Path:
+def _target_src(sync_cfg: ConfigParser, section: str, target_type: str) -> Path:
     if target_type == "codex":
-        source = cfg.get(section, "source", fallback=os.environ.get("CODEX_HOME", "~/.codex"))
+        src = sync_cfg.get(section, "source", fallback=os.environ.get("CODEX_HOME", "~/.codex"))
     else:
-        source = cfg.get(section, "source")
-    if not source.strip():
+        src = sync_cfg.get(section, "source")
+    if not src.strip():
         raise ValueError(f"[{section}] source cannot be empty")
-    return Path(source).expanduser()
+    return Path(src).expanduser()
 
 
-def _list_option(cfg: ConfigParser, section: str, option: str, default: list[str]) -> list[str]:
-    if not cfg.has_option(section, option):
+def _list_option(sync_cfg: ConfigParser, section: str, option: str, default: list[str]) -> list[str]:
+    if not sync_cfg.has_option(section, option):
         return default
-    return [item.strip() for item in cfg.get(section, option).split(",")]
+    return [item.strip() for item in sync_cfg.get(section, option).split(",")]
 
 
-def _sync_mode(cfg: ConfigParser, section: str, name: str) -> str:
-    sync_mode = cfg.get(section, "sync_mode", fallback="symlink").strip()
+def _sync_mode(sync_cfg: ConfigParser, section: str, name: str) -> str:
+    sync_mode = sync_cfg.get(section, "sync_mode", fallback="symlink").strip()
     valid_sync_modes = {"symlink", "copy"}
     if sync_mode not in valid_sync_modes:
         log.warning(

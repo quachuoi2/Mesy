@@ -11,30 +11,30 @@ import pytest
 
 @pytest.fixture
 def tmp_repo(tmp_path, monkeypatch):
-    """Create a temp Mesy repo structure and monkeypatch REPO_DIR/DATA_DIR everywhere."""
+    """Create a temp Mesy repo structure and monkeypatch MESY_DIR/REPOS_CFG_PATH."""
     repo = tmp_path / "Mesy"
     (repo / "claude" / "global").mkdir(parents=True)
     (repo / "claude" / "projects").mkdir(parents=True)
     (repo / "openclaw" / "main").mkdir(parents=True)
 
     # Patch in config (the single source of truth)
-    monkeypatch.setattr("src.config.REPO_DIR", repo)
-    monkeypatch.setattr("src.config.REPOS_CONF_PATH", repo / "repos.conf")
+    monkeypatch.setattr("src.config.MESY_DIR", repo)
+    monkeypatch.setattr("src.config.REPOS_CFG_PATH", repo / "repos.ini")
 
-    # Propagate to all modules that import REPO_DIR directly
-    monkeypatch.setattr("src.main.REPO_DIR", repo)
+    # Propagate to all modules that import MESY_DIR directly
+    monkeypatch.setattr("src.main.MESY_DIR", repo)
 
     return repo
 
 
 @pytest.fixture
 def tmp_multi_repo(tmp_path, monkeypatch):
-    """Create two independent data repos and patch REPOS_CONF_PATH.
+    """Create two independent data repos and patch REPOS_CFG_PATH.
 
     Returns a dict with keys:
       - repo_a: Path  (first data repo root)
       - repo_b: Path  (second data repo root)
-      - repos_conf: Path  (the patched repos.conf file)
+      - repos_cfg: Path  (the patched repos.ini file)
     """
     repo_a = tmp_path / "RepoA"
     repo_b = tmp_path / "RepoB"
@@ -43,8 +43,8 @@ def tmp_multi_repo(tmp_path, monkeypatch):
         (repo / "claude" / "projects").mkdir(parents=True)
         (repo / "openclaw" / "main").mkdir(parents=True)
 
-    repos_conf = tmp_path / "repos.conf"
-    repos_conf.write_text(
+    repos_cfg = tmp_path / "repos.ini"
+    repos_cfg.write_text(
         "[repo:repo-a]\n"
         f"path = {repo_a}\n"
         "\n"
@@ -54,11 +54,11 @@ def tmp_multi_repo(tmp_path, monkeypatch):
 
     code_repo = tmp_path / "Mesy"
     code_repo.mkdir()
-    monkeypatch.setattr("src.config.REPO_DIR", code_repo)
-    monkeypatch.setattr("src.config.REPOS_CONF_PATH", repos_conf)
-    monkeypatch.setattr("src.main.REPO_DIR", code_repo)
+    monkeypatch.setattr("src.config.MESY_DIR", code_repo)
+    monkeypatch.setattr("src.config.REPOS_CFG_PATH", repos_cfg)
+    monkeypatch.setattr("src.main.MESY_DIR", code_repo)
 
-    return {"repo_a": repo_a, "repo_b": repo_b, "repos_conf": repos_conf}
+    return {"repo_a": repo_a, "repo_b": repo_b, "repos_cfg": repos_cfg}
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ def mock_git(monkeypatch):
 
 
 @pytest.fixture
-def tmp_source(tmp_path):
+def tmp_src(tmp_path):
     """Create a temp source directory with sample .md files."""
     src = tmp_path / "source"
     src.mkdir()

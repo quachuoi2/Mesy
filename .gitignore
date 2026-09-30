@@ -5,7 +5,7 @@ __pycache__/
 .env
 todo/
 
-repos.conf
+repos.ini
 .venv/
 .pytest_cache/
 log.log*

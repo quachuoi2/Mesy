@@ -10,20 +10,20 @@ from src.targets.codex import CodexTarget
 @pytest.fixture
 def env(tmp_path):
     codex_home = tmp_path / "codex_home"
-    data_dir = tmp_path / "data"
+    repo_base = tmp_path / "data"
     codex_home.mkdir()
-    data_dir.mkdir()
-    return codex_home, data_dir
+    repo_base.mkdir()
+    return codex_home, repo_base
 
 
 def _target(env, sync_mode="symlink"):
-    codex_home, data_dir = env
-    return CodexTarget(name="codex", source=codex_home, repo_dir=data_dir / "codex",
-                       data_dir=data_dir, sync_mode=sync_mode)
+    codex_home, repo_base = env
+    return CodexTarget(name="codex", src=codex_home, target_dir=repo_base / "codex",
+                       repo_base=repo_base, sync_mode=sync_mode)
 
 
 def test_adopts_agents_and_nested_memories(env):
-    codex_home, data_dir = env
+    codex_home, repo_base = env
     (codex_home / "AGENTS.md").write_text("rules")
     (codex_home / "memories" / "notes").mkdir(parents=True)
     (codex_home / "memories" / "notes" / "a.md").write_text("deep")
@@ -31,33 +31,33 @@ def test_adopts_agents_and_nested_memories(env):
     _target(env).scan()
 
     assert (codex_home / "AGENTS.md").is_symlink()
-    assert (data_dir / "codex" / "AGENTS.md").read_text() == "rules"
+    assert (repo_base / "codex" / "AGENTS.md").read_text() == "rules"
     assert (codex_home / "memories").is_symlink()
-    assert (data_dir / "codex" / "memories" / "notes" / "a.md").read_text() == "deep"
+    assert (repo_base / "codex" / "memories" / "notes" / "a.md").read_text() == "deep"
 
 
 def test_links_repo_files_on_new_machine(env):
-    codex_home, data_dir = env
-    (data_dir / "codex" / "memories").mkdir(parents=True)
-    (data_dir / "codex" / "AGENTS.md").write_text("rules")
+    codex_home, repo_base = env
+    (repo_base / "codex" / "memories").mkdir(parents=True)
+    (repo_base / "codex" / "AGENTS.md").write_text("rules")
 
     _target(env).scan()
 
     assert (codex_home / "AGENTS.md").read_text() == "rules"
-    assert (codex_home / "memories").resolve() == (data_dir / "codex" / "memories").resolve()
+    assert (codex_home / "memories").resolve() == (repo_base / "codex" / "memories").resolve()
 
 
 def test_copy_mode_keeps_real_files(env):
-    codex_home, data_dir = env
+    codex_home, repo_base = env
     (codex_home / "memories" / "sub").mkdir(parents=True)
     (codex_home / "memories" / "sub" / "a.md").write_text("local")
-    (data_dir / "codex" / "memories").mkdir(parents=True)
-    (data_dir / "codex" / "memories" / "b.md").write_text("remote")
+    (repo_base / "codex" / "memories").mkdir(parents=True)
+    (repo_base / "codex" / "memories" / "b.md").write_text("remote")
 
     _target(env, sync_mode="copy").scan()
 
     assert not (codex_home / "memories").is_symlink()
-    assert (data_dir / "codex" / "memories" / "sub" / "a.md").read_text() == "local"
+    assert (repo_base / "codex" / "memories" / "sub" / "a.md").read_text() == "local"
     assert (codex_home / "memories" / "b.md").read_text() == "remote"
 
 

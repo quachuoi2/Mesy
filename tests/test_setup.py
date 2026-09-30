@@ -1,4 +1,4 @@
-"""Tests for setup.py — repos.conf prompting and per-repo dispatch."""
+"""Tests for setup.py — repos.ini prompting and per-repo dispatch."""
 
 from __future__ import annotations
 
@@ -13,17 +13,17 @@ import setup
 
 @pytest.fixture
 def tmp_code_repo(tmp_path, monkeypatch):
-    """Patch setup.REPO_DIR/REPOS_CONF_PATH and the config module paths to tmp_path."""
+    """Patch setup.MESY_DIR/REPOS_CFG_PATH and the config module paths to tmp_path."""
     code_repo = tmp_path / "Mesy"
     code_repo.mkdir()
-    repos_conf = code_repo / "repos.conf"
+    repos_cfg = code_repo / "repos.ini"
 
-    monkeypatch.setattr(setup, "REPO_DIR", code_repo)
-    monkeypatch.setattr(setup, "REPOS_CONF_PATH", repos_conf)
-    monkeypatch.setattr("src.config.REPO_DIR", code_repo)
-    monkeypatch.setattr("src.config.REPOS_CONF_PATH", repos_conf)
+    monkeypatch.setattr(setup, "MESY_DIR", code_repo)
+    monkeypatch.setattr(setup, "REPOS_CFG_PATH", repos_cfg)
+    monkeypatch.setattr("src.config.MESY_DIR", code_repo)
+    monkeypatch.setattr("src.config.REPOS_CFG_PATH", repos_cfg)
 
-    return {"code_repo": code_repo, "repos_conf": repos_conf}
+    return {"code_repo": code_repo, "repos_cfg": repos_cfg}
 
 
 def _feed_input(monkeypatch, answers: list[str]) -> None:
@@ -32,14 +32,14 @@ def _feed_input(monkeypatch, answers: list[str]) -> None:
     monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
 
 
-def test_prompt_repos_conf_appends_without_clobbering(tmp_code_repo, tmp_path, monkeypatch):
-    """Adding a repo to an already-populated repos.conf preserves existing sections."""
+def test_prompt_repos_cfg_appends_without_clobbering(tmp_code_repo, tmp_path, monkeypatch):
+    """Adding a repo to an already-populated repos.ini preserves existing sections."""
     existing_path = tmp_path / "ExistingRepo"
     existing_path.mkdir()
     new_path = tmp_path / "NewRepo"
     new_path.mkdir()
 
-    tmp_code_repo["repos_conf"].write_text(
+    tmp_code_repo["repos_cfg"].write_text(
         f"[repo:existing]\npath = {existing_path}\n"
     )
 
@@ -54,19 +54,19 @@ def test_prompt_repos_conf_appends_without_clobbering(tmp_code_repo, tmp_path, m
         ],
     )
 
-    repos = setup.prompt_repos_conf()
+    repos = setup.prompt_repos_cfg()
 
     assert [r["name"] for r in repos] == ["existing", "newbie"]
 
-    cfg = ConfigParser()
-    cfg.read(tmp_code_repo["repos_conf"])
-    assert cfg.sections() == ["repo:existing", "repo:newbie"]
-    assert cfg.get("repo:existing", "path") == str(existing_path)
-    assert cfg.get("repo:newbie", "path") == str(new_path.resolve())
+    repos_cfg = ConfigParser()
+    repos_cfg.read(tmp_code_repo["repos_cfg"])
+    assert repos_cfg.sections() == ["repo:existing", "repo:newbie"]
+    assert repos_cfg.get("repo:existing", "path") == str(existing_path)
+    assert repos_cfg.get("repo:newbie", "path") == str(new_path.resolve())
 
 
-def test_prompt_repos_conf_rejects_path_inside_repo_dir(tmp_code_repo, tmp_path, monkeypatch, capsys):
-    """A path resolving inside REPO_DIR is rejected; the resolved path is printed."""
+def test_prompt_repos_cfg_rejects_path_inside_mesy_dir(tmp_code_repo, tmp_path, monkeypatch, capsys):
+    """A path resolving inside MESY_DIR is rejected; the resolved path is printed."""
     inside = tmp_code_repo["code_repo"] / "sneaky"
     inside.mkdir()
     outside = tmp_path / "Outside"
@@ -76,14 +76,14 @@ def test_prompt_repos_conf_rejects_path_inside_repo_dir(tmp_code_repo, tmp_path,
         monkeypatch,
         [
             "repo1",            # name
-            str(inside),        # bad path (inside REPO_DIR)
+            str(inside),        # bad path (inside MESY_DIR)
             str(outside),       # retry with valid path
             "",                 # git remote (skip)
             "n",                # add another? done
         ],
     )
 
-    repos = setup.prompt_repos_conf()
+    repos = setup.prompt_repos_cfg()
 
     out = capsys.readouterr().out
     assert str(inside.resolve()) in out
@@ -91,8 +91,8 @@ def test_prompt_repos_conf_rejects_path_inside_repo_dir(tmp_code_repo, tmp_path,
     assert repos[0]["path"] == outside.resolve()
 
 
-def test_prompt_repos_conf_rejects_symlink_that_resolves_inside(tmp_code_repo, tmp_path, monkeypatch, capsys):
-    """A symlink that resolves into REPO_DIR is rejected (resolve-then-check)."""
+def test_prompt_repos_cfg_rejects_symlink_that_resolves_inside(tmp_code_repo, tmp_path, monkeypatch, capsys):
+    """A symlink that resolves into MESY_DIR is rejected (resolve-then-check)."""
     real_inside = tmp_code_repo["code_repo"] / "data"
     real_inside.mkdir()
     link = tmp_path / "external_link"
@@ -112,23 +112,23 @@ def test_prompt_repos_conf_rejects_symlink_that_resolves_inside(tmp_code_repo, t
         ],
     )
 
-    setup.prompt_repos_conf()
+    setup.prompt_repos_cfg()
 
     out = capsys.readouterr().out
     assert str(real_inside.resolve()) in out
 
 
 def test_main_invokes_setup_repo_per_repo(tmp_code_repo, tmp_path, monkeypatch):
-    """main() calls setup_repo once per repo returned from prompt_repos_conf."""
+    """main() calls setup_repo once per repo returned from prompt_repos_cfg."""
     repo_a = tmp_path / "A"
     repo_b = tmp_path / "B"
     for r in (repo_a, repo_b):
         r.mkdir()
-        (r / "sync.conf").write_text("[mesy]\n")
+        (r / "sync.ini").write_text("[mesy]\n")
 
     monkeypatch.setattr(
         setup,
-        "prompt_repos_conf",
+        "prompt_repos_cfg",
         lambda: [{"name": "a", "path": repo_a}, {"name": "b", "path": repo_b}],
     )
 
@@ -136,7 +136,7 @@ def test_main_invokes_setup_repo_per_repo(tmp_code_repo, tmp_path, monkeypatch):
     monkeypatch.setattr(
         setup,
         "setup_repo",
-        lambda data_dir, seen: calls.append(data_dir),
+        lambda repo_base, seen: calls.append(repo_base),
     )
     monkeypatch.setattr(setup, "install_daemon", lambda: None)
 
@@ -145,33 +145,33 @@ def test_main_invokes_setup_repo_per_repo(tmp_code_repo, tmp_path, monkeypatch):
     assert calls == [repo_a, repo_b]
 
 
-def test_ensure_sync_conf_offers_template_when_missing(tmp_path, monkeypatch, capsys):
-    """When sync.conf is missing, user can opt into a template; file is written."""
-    data_dir = tmp_path / "NewRepo"
-    data_dir.mkdir()
+def test_ensure_sync_cfg_offers_template_when_missing(tmp_path, monkeypatch, capsys):
+    """When sync.ini is missing, user can opt into a template; file is written."""
+    repo_base = tmp_path / "NewRepo"
+    repo_base.mkdir()
 
     _feed_input(monkeypatch, ["y"])
 
-    assert setup.ensure_sync_conf(data_dir) is True
-    assert (data_dir / "sync.conf").exists()
-    assert "[mesy]" in (data_dir / "sync.conf").read_text()
+    assert setup.ensure_sync_cfg(repo_base) is True
+    assert (repo_base / "sync.ini").exists()
+    assert "[mesy]" in (repo_base / "sync.ini").read_text()
 
 
-def test_ensure_sync_conf_skips_when_declined(tmp_path, monkeypatch):
+def test_ensure_sync_cfg_skips_when_declined(tmp_path, monkeypatch):
     """When user declines the template, the repo is skipped."""
-    data_dir = tmp_path / "EmptyRepo"
-    data_dir.mkdir()
+    repo_base = tmp_path / "EmptyRepo"
+    repo_base.mkdir()
 
     _feed_input(monkeypatch, ["n"])
 
-    assert setup.ensure_sync_conf(data_dir) is False
-    assert not (data_dir / "sync.conf").exists()
+    assert setup.ensure_sync_cfg(repo_base) is False
+    assert not (repo_base / "sync.ini").exists()
 
 
 def test_setup_git_sync_clones_when_dir_empty(tmp_path, monkeypatch):
     """Empty target dir + remote URL → git clone is invoked."""
-    data_dir = tmp_path / "Empty"
-    data_dir.mkdir()
+    repo_base = tmp_path / "Empty"
+    repo_base.mkdir()
 
     _feed_input(monkeypatch, ["git@github.com:me/r.git"])
 
@@ -186,7 +186,7 @@ def test_setup_git_sync_clones_when_dir_empty(tmp_path, monkeypatch):
 
     monkeypatch.setattr("subprocess.run", fake_run)
 
-    setup._setup_git_sync(data_dir)
+    setup._setup_git_sync(repo_base)
 
     assert calls[0][:2] == ["git", "clone"]
     assert "git@github.com:me/r.git" in calls[0]
@@ -194,9 +194,9 @@ def test_setup_git_sync_clones_when_dir_empty(tmp_path, monkeypatch):
 
 def test_setup_git_sync_inits_when_dir_nonempty(tmp_path, monkeypatch):
     """Non-empty dir + remote URL → init + remote add + fetch + pull."""
-    data_dir = tmp_path / "Existing"
-    data_dir.mkdir()
-    (data_dir / "stale.md").write_text("hi")
+    repo_base = tmp_path / "Existing"
+    repo_base.mkdir()
+    (repo_base / "stale.md").write_text("hi")
 
     _feed_input(monkeypatch, ["https://example.com/r.git"])
 
@@ -208,7 +208,7 @@ def test_setup_git_sync_inits_when_dir_nonempty(tmp_path, monkeypatch):
 
     monkeypatch.setattr("subprocess.run", fake_run)
 
-    setup._setup_git_sync(data_dir)
+    setup._setup_git_sync(repo_base)
 
     invoked = [tuple(c[3:]) for c in calls]  # strip ["git","-C",dir]
     assert ("init",) in invoked
@@ -218,8 +218,8 @@ def test_setup_git_sync_inits_when_dir_nonempty(tmp_path, monkeypatch):
 
 def test_setup_git_sync_skips_existing_repo(tmp_path, monkeypatch):
     """If `.git` already exists, no prompt is issued and no commands run."""
-    data_dir = tmp_path / "AlreadyRepo"
-    (data_dir / ".git").mkdir(parents=True)
+    repo_base = tmp_path / "AlreadyRepo"
+    (repo_base / ".git").mkdir(parents=True)
 
     # No input expected — _feed_input with empty iter would raise on consume.
     _feed_input(monkeypatch, [])
@@ -227,37 +227,37 @@ def test_setup_git_sync_skips_existing_repo(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr("subprocess.run", lambda *a, **k: called.append(a) or None)
 
-    setup._setup_git_sync(data_dir)
+    setup._setup_git_sync(repo_base)
 
     assert called == []
 
 
 def test_setup_git_sync_blank_url_skips(tmp_path, monkeypatch):
     """Blank URL → warn and do nothing destructive."""
-    data_dir = tmp_path / "Blank"
-    data_dir.mkdir()
+    repo_base = tmp_path / "Blank"
+    repo_base.mkdir()
 
     _feed_input(monkeypatch, [""])
 
     called = []
     monkeypatch.setattr("subprocess.run", lambda *a, **k: called.append(a) or None)
 
-    setup._setup_git_sync(data_dir)
+    setup._setup_git_sync(repo_base)
 
     assert called == []
-    assert data_dir.exists()
+    assert repo_base.exists()
 
 
 def test_setup_repo_skips_duplicate_target_types(tmp_path, monkeypatch, capsys):
     """A second repo declaring the same target type is warned and skipped."""
-    data_dir = tmp_path / "Repo"
-    data_dir.mkdir()
-    (data_dir / "sync.conf").write_text(
+    repo_base = tmp_path / "Repo"
+    repo_base.mkdir()
+    (repo_base / "sync.ini").write_text(
         "[mesy]\n"
         "[target:claude_code]\n"
         "source = ~/.claude\n"
         "repo_subdir = claude\n"
-        "mapping_conf = claude/projects.conf\n"
+        "mapping_cfg = claude/projects.ini\n"
     )
 
     calls = []
@@ -265,13 +265,13 @@ def test_setup_repo_skips_duplicate_target_types(tmp_path, monkeypatch, capsys):
 
     # First pass: type is claimed.
     seen: set[str] = set()
-    setup.setup_repo(data_dir, seen)
-    assert calls == [data_dir]
+    setup.setup_repo(repo_base, seen)
+    assert calls == [repo_base]
     assert "claude-code" in seen
 
     # Second pass: same type already seen → skip, no additional call.
-    setup.setup_repo(data_dir, seen)
-    assert calls == [data_dir]
+    setup.setup_repo(repo_base, seen)
+    assert calls == [repo_base]
     out = capsys.readouterr().out
     assert "already handled by an earlier repo" in out
 
@@ -295,11 +295,11 @@ def test_setup_claude_code_symlinks_links_rules(tmp_path, monkeypatch):
     (claude_dir / "rules").mkdir(parents=True)
     (claude_dir / "rules" / "code.md").write_text("# Code")
     monkeypatch.setattr(setup, "CLAUDE_DIR", claude_dir)
-    data_dir = tmp_path / "AlfredMemory"
+    repo_base = tmp_path / "AlfredMemory"
 
-    setup.setup_claude_code_symlinks(data_dir)
+    setup.setup_claude_code_symlinks(repo_base)
 
-    repo_rules = data_dir / "claude" / "global" / "rules"
+    repo_rules = repo_base / "claude" / "global" / "rules"
     assert (claude_dir / "rules").is_symlink()
     assert (repo_rules / "code.md").read_text() == "# Code"
 
@@ -308,7 +308,7 @@ def test_make_symlink_keeps_folder_when_copy_incomplete(tmp_path, monkeypatch):
     link = tmp_path / "memory"
     link.mkdir()
     (link / "notes.md").write_text("notes")
-    monkeypatch.setattr(setup, "all_copied", lambda src, dst: False)
+    monkeypatch.setattr(setup, "all_copied", lambda src, dest_dir: False)
 
     setup.make_symlink(link, tmp_path / "repo" / "memory")
 

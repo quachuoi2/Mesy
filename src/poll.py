@@ -7,40 +7,40 @@ import time
 from pathlib import Path
 
 from src.cycle import commit_repo, run_intervals, scan_repo
-from src.factory import RepoContext
+from src.factory import RepoCtx
 
 log = logging.getLogger("mesy")
 
 
-def run_with_polling(repo_contexts: list[RepoContext]) -> None:
+def run_with_polling(repo_ctxs: list[RepoCtx]) -> None:
     """Fallback: poll for changes using mtime comparison, across all repos."""
     # Shortest debounce across repos, so no repo's debounce window is silently skipped.
-    poll_interval = min(max(float(ctx.settings["debounce_seconds"]), 60) for ctx in repo_contexts)
+    poll_interval = min(max(float(repo_ctx.settings["debounce_seconds"]), 60) for repo_ctx in repo_ctxs)
     log.info("Polling mode (interval=%ss)", poll_interval)
 
-    prev_mtimes = {ctx.name: get_md_mtimes(ctx.data_dir) for ctx in repo_contexts}
-    last_pull: dict[str, float] = {ctx.name: time.time() for ctx in repo_contexts}
-    last_scan = {ctx.name: time.time() for ctx in repo_contexts}
+    prev_mtimes = {repo_ctx.name: get_md_mtimes(repo_ctx.repo_base) for repo_ctx in repo_ctxs}
+    last_pull: dict[str, float] = {repo_ctx.name: time.time() for repo_ctx in repo_ctxs}
+    last_scan = {repo_ctx.name: time.time() for repo_ctx in repo_ctxs}
 
     try:
         while True:
             time.sleep(poll_interval)
             now = time.time()
-            for ctx in repo_contexts:
-                current = get_md_mtimes(ctx.data_dir)
-                if current != prev_mtimes[ctx.name]:
-                    prev_mtimes[ctx.name] = current
-                    if scan_repo(ctx):
-                        commit_repo(ctx)
-                run_intervals(ctx, now, last_pull, last_scan)
+            for repo_ctx in repo_ctxs:
+                current = get_md_mtimes(repo_ctx.repo_base)
+                if current != prev_mtimes[repo_ctx.name]:
+                    prev_mtimes[repo_ctx.name] = current
+                    if scan_repo(repo_ctx):
+                        commit_repo(repo_ctx)
+                run_intervals(repo_ctx, now, last_pull, last_scan)
     except KeyboardInterrupt:
         pass
 
 
-def get_md_mtimes(data_dir: Path) -> dict[str, float]:
-    """Get modification times of all .md files in data_dir."""
+def get_md_mtimes(repo_base: Path) -> dict[str, float]:
+    """Get modification times of all .md files in repo_base."""
     mtimes = {}
-    for md_file in data_dir.rglob("*.md"):
+    for md_file in repo_base.rglob("*.md"):
         if ".git" in md_file.parts:
             continue
         try:
