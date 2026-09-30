@@ -12,6 +12,7 @@ class CodexTarget(SyncTarget):
 
     def scan(self) -> None:
         self.target_dir.mkdir(parents=True, exist_ok=True)
+
         self._sync_file(self.src / "AGENTS.md", self.target_dir / "AGENTS.md", label="Codex AGENTS.md")
         self._sync_dir(self.src / "memories", self.target_dir / "memories", label="Codex memories")
 

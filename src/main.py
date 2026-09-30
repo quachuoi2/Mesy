@@ -21,8 +21,10 @@ def main() -> None:
     _setup_logging()
     repo_ctxs = _load_repo_ctxs()
     _log_startup(repo_ctxs)
+
     for repo_ctx in repo_ctxs:
         first_sync(repo_ctx)
+
     _run(repo_ctxs, _make_detector())
 
 
@@ -43,8 +45,10 @@ def _load_repo_ctxs() -> list[RepoCtx]:
         raise SystemExit(1)
 
     log.info("Loaded %d repo(s) from repos.ini", len(repo_list))
+
     try:
         repo_ctxs = build_repo_ctxs(repo_list)
+
     except (ValueError, OSError) as exc:
         log.error("Configuration error: %s", exc)
         raise SystemExit(1) from None
@@ -52,6 +56,7 @@ def _load_repo_ctxs() -> list[RepoCtx]:
     if not any(repo_ctx.targets for repo_ctx in repo_ctxs):
         log.error("No targets configured in any sync.ini. Add [target:*] sections.")
         raise SystemExit(1)
+
     return repo_ctxs
 
 
@@ -69,9 +74,11 @@ def _log_startup(repo_ctxs: list[RepoCtx]) -> None:
 def _make_detector() -> ChangeDetector:
     try:
         from src.detectors.watch import WatchdogDetector
+
     except ImportError:
         log.info("watchdog not installed, falling back to polling")
         return PollingDetector()
+
     return WatchdogDetector()
 
 
@@ -79,7 +86,9 @@ def _run(repo_ctxs: list[RepoCtx], detector: ChangeDetector) -> None:
     now = time.time()
     last_pull = {repo_ctx.name: now for repo_ctx in repo_ctxs}
     last_scan = dict(last_pull)
+
     detector.start(repo_ctxs)
+
     try:
         while True:
             time.sleep(LOOP_TICK_SECONDS)
@@ -88,7 +97,9 @@ def _run(repo_ctxs: list[RepoCtx], detector: ChangeDetector) -> None:
                 if detector.changed(repo_ctx, now) and scan_repo(repo_ctx):
                     commit_repo(repo_ctx)
                 run_intervals(repo_ctx, now, last_pull, last_scan)
+
     except KeyboardInterrupt:
         pass
+
     finally:
         detector.stop()

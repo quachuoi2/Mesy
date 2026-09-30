@@ -135,6 +135,7 @@ def _flag_conflict(text: str) -> str:
         parts = text.split("---\n", 2)
         if len(parts) >= 3:
             return f"---\nconflict: true\n{parts[1]}---\n{parts[2]}"
+
     return text
 
 
@@ -145,5 +146,6 @@ def pull_remote(repo_base: Path) -> None:
         if "Already up to date" not in result.stdout:
             log.info("Pulled remote changes")
         return
+
     log.debug("pull failed (offline?), attempting conflict resolution: %s", result.stderr)
     resolve_conflicts(repo_base)

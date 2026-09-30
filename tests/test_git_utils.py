@@ -29,6 +29,7 @@ class TestGitHelper:
         monkeypatch.setattr("subprocess.run", fake_run)
 
         from src.git_sync import git
+
         git("status", "--porcelain", repo_base=tmp_repo)
 
         assert captured[0][0] == "git"
@@ -48,6 +49,7 @@ class TestGitHelper:
         monkeypatch.setattr("subprocess.run", fake_run)
 
         from src.git_sync import git
+
         git("log", repo_base=tmp_repo)
 
         assert kwargs_captured.get("timeout") == 30
@@ -60,6 +62,7 @@ class TestHasLocalChanges:
             "subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, " M some_file.md", ""),
         )
+
         assert has_local_changes(repo_base=tmp_repo) is True
 
     def test_returns_false_when_clean(self, tmp_repo, monkeypatch):
@@ -68,6 +71,7 @@ class TestHasLocalChanges:
             "subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
         )
+
         assert has_local_changes(repo_base=tmp_repo) is False
 
 
@@ -91,6 +95,7 @@ class TestCommitAndPush:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
+
         commit_and_push(["claude/global/", "claude/projects/"], repo_base=tmp_repo)
 
         git_subcommands = [c[3] for c in commands if c[0] == "git"]
@@ -99,7 +104,6 @@ class TestCommitAndPush:
         assert "pull" in git_subcommands
         assert "push" in git_subcommands
 
-        # Verify commit message includes changed files
         commit_cmd = [c for c in commands if c[0] == "git" and c[3] == "commit"][0]
         commit_msg = commit_cmd[commit_cmd.index("-m") + 1]
         assert "update file.md" in commit_msg
@@ -114,6 +118,7 @@ class TestCommitAndPush:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
+
         commit_and_push(["global/"], repo_base=tmp_repo)
 
         # Only the status check should have run
@@ -161,6 +166,7 @@ class TestCommitAndPush:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
+
         commit_and_push(["global/"], repo_base=custom_repo_base)
 
         assert all(d == str(custom_repo_base) for d in used_dirs)
@@ -178,6 +184,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
+
         resolve_conflicts(repo_base=tmp_repo)
 
         subcommands = [c[3:] for c in commands if c[0] == "git"]
@@ -196,6 +203,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
+
         resolve_conflicts(repo_base=tmp_repo)
 
         subcommands = [c[3:] for c in commands if c[0] == "git"]
@@ -217,6 +225,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
+
         resolve_conflicts(repo_base=tmp_repo)
 
         content = conflicted_file.read_text()
@@ -231,6 +240,7 @@ class TestResolveConflicts:
         conflicted_file.write_text(
             "<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> abc\n"
         )
+
         commands = []
 
         def fake_run(cmd, **kw):
@@ -240,6 +250,7 @@ class TestResolveConflicts:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
+
         resolve_conflicts(repo_base=tmp_repo)
 
         subcommands = [c[3:] for c in commands if c[0] == "git"]
@@ -279,6 +290,7 @@ class TestPullRemote:
         """pull_remote() resolves conflicts instead of leaving the rebase stuck."""
         conflicted_file = tmp_repo / "claude" / "global" / "conflict.md"
         conflicted_file.write_text("<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> abc\n")
+
         commands = []
 
         def fake_run(cmd, **kw):
@@ -290,6 +302,7 @@ class TestPullRemote:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
+
         pull_remote(repo_base=tmp_repo)
 
         assert "<<<<<<<" not in conflicted_file.read_text()
@@ -300,6 +313,7 @@ class TestSplitFrontmatter:
     def test_parses_frontmatter(self):
         """split_frontmatter() extracts key:value pairs from YAML header."""
         text = "---\ntitle: hello\nconflict: true\n---\nbody text\n"
+
         body, frontmatter = split_frontmatter(text)
         assert frontmatter["title"] == "hello"
         assert frontmatter["conflict"] == "true"
@@ -308,6 +322,7 @@ class TestSplitFrontmatter:
     def test_no_frontmatter(self):
         """split_frontmatter() returns empty dict when there's no --- header."""
         text = "Just some plain text.\nNo frontmatter here.\n"
+
         body, frontmatter = split_frontmatter(text)
         assert frontmatter == {}
         assert body == text
@@ -315,6 +330,7 @@ class TestSplitFrontmatter:
     def test_incomplete_frontmatter(self):
         """split_frontmatter() handles malformed frontmatter gracefully."""
         text = "---\njust one delimiter\n"
+
         body, frontmatter = split_frontmatter(text)
         assert frontmatter == {}
         assert body == text
@@ -377,6 +393,7 @@ class TestCurrentBranch:
 
         monkeypatch.setattr("src.git_sync.git",
                             lambda *a, **kw: subprocess.CompletedProcess(a, 0, "memory-sync\n", ""))
+
         assert current_branch(Path("/tmp")) == "memory-sync"
 
     def test_falls_back_to_main_on_detached_head(self, monkeypatch):
@@ -384,4 +401,5 @@ class TestCurrentBranch:
 
         monkeypatch.setattr("src.git_sync.git",
                             lambda *a, **kw: subprocess.CompletedProcess(a, 128, "", "fatal"))
+
         assert current_branch(Path("/tmp")) == "main"

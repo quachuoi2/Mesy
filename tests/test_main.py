@@ -162,7 +162,6 @@ class TestBuildRepoCtxs:
         """build_repo_ctxs() creates a RepoCtx for each repo in the list."""
         from src.factory import build_repo_ctxs
 
-        # Setup sync.ini for repo_a
         sync_cfg_text = (
             "[target:generic]\n"
             f"source = {tmp_multi_repo['repo_a'] / 'openclaw' / 'main'}\n"
@@ -184,7 +183,6 @@ class TestBuildRepoCtxs:
         """build_repo_ctxs() handles multiple repos with independent configs."""
         from src.factory import build_repo_ctxs
 
-        # Setup sync.ini for both repos with different targets
         for repo_name, repo_path in [
             ("repo-a", tmp_multi_repo["repo_a"]),
             ("repo-b", tmp_multi_repo["repo_b"]),
@@ -212,7 +210,6 @@ class TestBuildRepoCtxs:
         """build_repo_ctxs() preserves the order of repos."""
         from src.factory import build_repo_ctxs
 
-        # Setup sync.ini for repo_a
         sync_cfg_text = (
             "[target:generic]\n"
             f"source = {tmp_multi_repo['repo_a'] / 'openclaw' / 'main'}\n"
@@ -256,7 +253,6 @@ class TestBuildRepoCtxs:
         """build_repo_ctxs() uses config defaults when sync.ini has no [mesy] section."""
         from src.factory import build_repo_ctxs
 
-        # Write a sync.ini with only a target (no [mesy] override)
         (tmp_multi_repo["repo_a"] / "sync.ini").write_text(
             "[target:generic]\n"
             f"source = {tmp_multi_repo['repo_a'] / 'openclaw' / 'main'}\n"
@@ -419,7 +415,6 @@ class TestMain:
         from configparser import ConfigParser
         from src.targets.base import SyncTarget
 
-        # Write a minimal sync.ini so load_targets returns one generic target
         sync_cfg_text = (
             "[target:openclaw]\n"
             f"source = {tmp_repo / 'openclaw' / 'main'}\n"
@@ -434,7 +429,6 @@ class TestMain:
         monkeypatch.setattr("src.git_sync.pull_remote", pull_mock)
         monkeypatch.setattr("src.git_sync.commit_and_push", push_mock)
 
-        # Prevent the daemon loop from starting after initial sync
         import src.factory as factory_mod
 
         original_build = factory_mod.build_targets
@@ -457,6 +451,7 @@ class TestMain:
         )
 
         from src.main import main
+
         main()
 
         pull_mock.assert_called_once()
@@ -467,7 +462,6 @@ class TestMain:
         """main() uses repos.ini when available and loads all repos."""
         from src.main import main
 
-        # Setup sync.ini for both repos
         for repo_path in [tmp_multi_repo["repo_a"], tmp_multi_repo["repo_b"]]:
             sync_cfg_text = (
                 "[target:generic]\n"
@@ -479,13 +473,11 @@ class TestMain:
         # Mock the watch loop
         monkeypatch.setattr("src.main._run", lambda *a, **kw: None)
 
-        # Mock git operations
         pull_mock = MagicMock()
         push_mock = MagicMock()
         monkeypatch.setattr("src.git_sync.pull_remote", pull_mock)
         monkeypatch.setattr("src.git_sync.commit_and_push", push_mock)
 
-        # Patch load_repos to return our test repos
         monkeypatch.setattr(
             "src.main.load_repos",
             lambda: [
@@ -496,7 +488,6 @@ class TestMain:
 
         main()
 
-        # Should call pull and push for both repos
         assert pull_mock.call_count == 2
         assert push_mock.call_count == 2
 
@@ -509,6 +500,7 @@ class TestIntervalValidation:
         from src.factory import build_repo_ctxs
 
         (tmp_repo / "sync.ini").write_text(f"[mesy]\nscan_interval_seconds = {value}\n")
+
         with pytest.raises(ValueError, match="scan_interval_seconds"):
             build_repo_ctxs([{"name": "r", "path": tmp_repo}])
 
@@ -516,6 +508,7 @@ class TestIntervalValidation:
         from src.factory import build_repo_ctxs
 
         (tmp_repo / "sync.ini").write_text("[mesy]\nscan_interval_seconds = 45\n")
+
         contexts = build_repo_ctxs([{"name": "r", "path": tmp_repo}])
         assert contexts[0].settings["scan_interval_seconds"] == "45"
 
@@ -527,6 +520,7 @@ class TestStartupExitStatus:
         from src.main import main
 
         monkeypatch.setattr("src.main.load_repos", lambda: [])
+
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 1
@@ -537,6 +531,7 @@ class TestStartupExitStatus:
         (tmp_repo / "sync.ini").write_text("[mesy]\nscan_interval_seconds = nan\n")
         monkeypatch.setattr("src.main.load_repos",
                             lambda: [{"name": "r", "path": tmp_repo}])
+
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 1

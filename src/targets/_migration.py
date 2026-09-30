@@ -77,6 +77,7 @@ def ensure_real_file(path: Path, repo_fallback: Path | None) -> bool:
 def _replace_with_copy(path: Path, src: Path) -> None:
     tmp = path.parent / (path.name + ".mesy_tmp")
     shutil.copy2(src, tmp)
+
     path.unlink()
     tmp.rename(path)
 
@@ -122,10 +123,12 @@ def _real_dir_src(path: Path, repo_fallback: Path | None) -> Path | None:
     resolved = path.resolve()
     if resolved.exists() and resolved.is_dir():
         return resolved
+
     if repo_fallback is not None and repo_fallback.exists() and repo_fallback.is_dir():
         log.warning(
             "ensure_real_dir: symlink target missing for %s, using repo fallback",
             path.name,
         )
         return repo_fallback
+
     return None

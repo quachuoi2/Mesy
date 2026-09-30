@@ -39,11 +39,13 @@ def _parse_raw_names(text: str) -> list[str]:
     """Extract raw names (preserving order, deduped) from snippet ``paths =`` lines."""
     seen: set[str] = set()
     out: list[str] = []
+
     for match in _PATHS_LINE.finditer(text):
         raw = match.group(1)
         if raw not in seen:
             seen.add(raw)
             out.append(raw)
+
     return out
 
 
@@ -104,6 +106,7 @@ def prune_pending(repo_base: Path, mapping: dict[str, str]) -> list[str]:
     if not remaining:
         path.unlink()
         return removed
+
     if removed:
         _rewrite(path, remaining)
     return removed

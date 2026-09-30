@@ -12,14 +12,17 @@ def split_frontmatter(text: str) -> tuple[str, dict]:
     """Split markdown into (body, frontmatter_dict)."""
     if not text.startswith("---\n"):
         return text, {}
+
     parts = text.split("---\n", 2)
     if len(parts) < 3:
         return text, {}
+
     frontmatter = {}
     for line in parts[1].strip().split("\n"):
         if ": " in line:
             key, val = line.split(": ", 1)
             frontmatter[key.strip()] = val.strip()
+
     return parts[2], frontmatter
 
 

@@ -12,6 +12,7 @@ Checked against the code on branch `refactor` at `aea9c94`, 2026-09-26.
 | 6 | A sync-mode change clears every hash in the repo's hash file | `src/targets/generic.py` `_migrate` | No (same condition as 5) |
 | 7 | Claude Code copy mode syncs two local files to one repo file | `src/targets/claude_code.py` | No (neither file pair exists today) |
 | 8 | Failed pulls are logged at debug only | `src/git_sync.py` `pull_remote` | Yes, silently |
+| 9 | `setup.py` crashes on any symlink-mode generic target | `setup.py:517,520` | Yes, on every `python setup.py` with such a target |
 
 ## 1. Copy mode: every one-sided edit becomes a conflict
 
@@ -62,3 +63,10 @@ Checked against the code on branch `refactor` at `aea9c94`, 2026-09-26.
 - **What happens:** `pull_remote` logs any non-zero `git pull --rebase` at debug level with the message "offline?".
 - **Effect:** a pull refused because of uncommitted changes, or any other git error, looks the same as being offline and never appears in `log.log` at the default level. This is how the rename-save bug (Point 3) stayed hidden.
 - **Fix:** log at warning, once per distinct error, the same way scan failures are logged.
+
+## 9. `setup.py` crashes on generic targets
+
+- **What happens:** `setup_generic_target` takes the source folder as `src`, but its two log lines use `{source}`, a name that does not exist. Python stops with `NameError: name 'source' is not defined` (checked on main at 3ce7281, 2026-09-30).
+- **Effect:** setup stops partway through the repo list; later repos and the daemon install never run.
+- **Why tests missed it:** no test calls `setup_generic_target`.
+- **Fix:** use `{src}` in both lines, and add one test that runs it. The `src`/`source` mix is listed in `RuleBreaks.md`.

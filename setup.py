@@ -115,6 +115,7 @@ def _clone(repo_base: Path, url: str) -> None:
         log("error", f"git clone failed: {result.stderr.strip()}")
         repo_base.mkdir(parents=True, exist_ok=True)
         return
+
     log("ok", f"Cloned {url} into {repo_base}")
 
 
@@ -129,6 +130,7 @@ def _init_with_remote(repo_base: Path, url: str) -> None:
     if _git(repo_base, "init").returncode != 0:
         log("error", "git init failed")
         return
+
     if _git(repo_base, "remote", "add", "origin", url).returncode != 0:
         log("error", "git remote add failed")
         return
@@ -138,7 +140,6 @@ def _init_with_remote(repo_base: Path, url: str) -> None:
         log("warn", f"git fetch failed: {fetch.stderr.strip()} — leaving repo initialized")
         return
 
-    # Determine remote default branch (fall back to main).
     head = _git(repo_base, "symbolic-ref", "refs/remotes/origin/HEAD")
     if head.returncode == 0 and head.stdout.strip():
         branch = head.stdout.strip().rsplit("/", 1)[-1]
@@ -146,6 +147,7 @@ def _init_with_remote(repo_base: Path, url: str) -> None:
         branch = "main"
 
     _git(repo_base, "checkout", "-b", branch)
+
     pull = _git(repo_base, "pull", "origin", branch, "--allow-unrelated-histories")
     if pull.returncode != 0:
         log("warn", f"git pull failed: {pull.stderr.strip()}")
@@ -163,6 +165,7 @@ def _repo_path_valid(raw: str) -> Path | None:
     candidate = Path(raw).expanduser()
     try:
         resolved = candidate.resolve()
+
     except OSError as e:
         log("error", f"Cannot resolve path: {e}")
         return None
@@ -172,6 +175,7 @@ def _repo_path_valid(raw: str) -> Path | None:
         resolved.relative_to(repo_resolved)
         log("error", f"Data repo path resolves inside the Mesy code dir: {resolved}")
         return None
+
     except ValueError:
         pass
 
@@ -217,9 +221,11 @@ def _want_more_repos(existing: list[dict]) -> bool:
     if not existing:
         print("No data repos registered yet. Add at least one.")
         return True
+
     print(f"Found {len(existing)} repo(s) in repos.ini:")
     for r in existing:
         print(f"  [{r['name']}] {r['path']}")
+
     return input("Add another data repo? [y/N]: ").strip().lower() == "y"
 
 
@@ -229,9 +235,11 @@ def _prompt_name(taken: set[str]) -> str:
         if not name:
             log("error", "Name cannot be empty")
             continue
+
         if name in taken:
             log("error", f"Name '{name}' already registered")
             continue
+
         return name
 
 
@@ -241,6 +249,7 @@ def _prompt_path() -> Path:
         if not raw_path:
             log("error", "Path cannot be empty")
             continue
+
         resolved = _repo_path_valid(raw_path)
         if resolved is None:
             continue
@@ -326,9 +335,11 @@ def _already_linked(link: Path, target: Path, label: str) -> bool:
     """True when *link* already points at *target*; a link elsewhere is removed."""
     if not link.is_symlink():
         return False
+
     if link.resolve() == target.resolve():
         log("ok", f"Symlink already exists: {label}")
         return True
+
     log("relink", f"Updating symlink: {label} -> {target}")
     link.unlink()
     return False
@@ -350,6 +361,7 @@ def make_file_symlink(link: Path, target: Path) -> None:
         try:
             os.symlink(target, link)
             log("ok", f"Symlinked {link.name}")
+
         except OSError:
             shutil.copy2(target, link)
             log("warn", f"Symlink failed for {link.name}, copied instead (edits won't sync back!)")
@@ -367,6 +379,7 @@ def _move_file_into_repo(link: Path, target: Path) -> None:
         merge_conflicting_file(local=link, repo=target)
     else:
         log("ok", f"{link.name} identical, skipping")
+
     link.unlink()
 
 
@@ -385,6 +398,7 @@ def make_symlink(link: Path, target: Path) -> None:
         try:
             os.symlink(target, link, target_is_directory=True)
             log("ok", f"Symlinked {link.name}")
+
         except OSError:
             log("warn", "Symlink failed (enable Developer Mode in Windows Settings)")
             log("info", "Trying directory junction instead...")
@@ -403,9 +417,11 @@ def _move_dir_into_repo(link: Path, target: Path) -> bool:
     log("migrate", f"Moving existing memory from {link}")
     target.mkdir(parents=True, exist_ok=True)
     merge_into(link, target)
+
     if not all_copied(link, target):
         log("error", f"Not every file reached {target}; leaving {link} in place")
         return False
+
     shutil.rmtree(link)
     return True
 
@@ -429,6 +445,7 @@ def migrate_repo_to_canonical(repo_base: Path, mapping: dict[str, str]) -> None:
         canonical_dir = projects_dir / canonical
         if canonical_dir.exists():
             continue
+
         for raw_name in raw_names:
             raw_dir = projects_dir / raw_name
             if raw_dir.exists() and raw_dir.is_dir():
@@ -475,6 +492,7 @@ def _prelink_mapped(repo_base: Path, claude_projects_dir: Path, mapping: dict[st
         memory_path = claude_project_dir / "memory"
         if memory_path.exists():
             continue
+
         canonical_dir = repo_base / "claude" / "projects" / canonical
         if canonical_dir.exists():
             claude_project_dir.mkdir(parents=True, exist_ok=True)
@@ -506,17 +524,22 @@ def setup_generic_target(repo_base: Path, name: str, src: Path, repo_subdir: str
 
 def _adopt_dir(src: Path, dest: Path, name: str, file_patterns: list[str], exclude: list[str]) -> None:
     dest.mkdir(parents=True, exist_ok=True)
+
     for item in sorted(src.iterdir()):
         if any(fnmatch.fnmatch(item.name, pattern.rstrip("/")) for pattern in exclude):
             log("skip", f"  [{name}] Excluded: {item.name}")
             continue
+
         if item.is_symlink():
             continue
+
         if item.is_dir():
             _adopt_dir(item, dest / item.name, name, file_patterns, exclude)
             continue
+
         if not any(fnmatch.fnmatch(item.name, pat) for pat in file_patterns):
             continue
+
         _adopt_file(item, dest / item.name, name)
 
     for repo_file in sorted(dest.iterdir()):
@@ -537,6 +560,7 @@ def _adopt_file(item: Path, repo_file: Path, name: str) -> None:
         try:
             os.symlink(repo_file, item)
             log("ok", f"  [{name}] Symlinked {item.name}")
+
         except OSError:
             shutil.copy2(repo_file, item)
             log("warn", f"  [{name}] Symlink failed for {item.name}, copied instead")
@@ -554,8 +578,10 @@ def _link_repo_item(repo_file: Path, src: Path, name: str, file_patterns: list[s
         if not src_sub.is_symlink():
             _adopt_dir(src_sub, repo_file, name, file_patterns, exclude)
         return
+
     if not any(fnmatch.fnmatch(repo_file.name, pat) for pat in file_patterns):
         return
+
     src_file = src / repo_file.name
     if src_file.is_symlink():
         if src_file.resolve() == repo_file.resolve():
@@ -563,6 +589,7 @@ def _link_repo_item(repo_file: Path, src: Path, name: str, file_patterns: list[s
         src_file.unlink()
     elif src_file.exists():
         return
+
     os.symlink(repo_file, src_file)
     log("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
 
@@ -577,6 +604,7 @@ def setup_repo(repo_base: Path, seen_target_types: set[str]) -> None:
     for target_def in load_sync_cfg_targets(repo_base):
         if not _claim_target(target_def, seen_target_types):
             continue
+
         if target_def["type"] == "codex":
             _setup_codex(target_def, repo_base)
         elif target_def["type"] == "claude-code":
@@ -594,6 +622,7 @@ def _claim_target(target_def: dict, seen_target_types: set[str]) -> bool:
     if key in seen_target_types:
         log("warn", f"[{target_def['name']}] target type '{target_type}' already handled by an earlier repo — skipping")
         return False
+
     seen_target_types.add(key)
     return True
 
@@ -612,6 +641,7 @@ def _setup_generic(target_def: dict, repo_base: Path) -> None:
             "Will be initialized on first daemon run.",
         )
         return
+
     print(f"--- {target_def['name']} ({repo_base.name}) ---")
     setup_generic_target(
         repo_base=repo_base,
@@ -735,16 +765,18 @@ def main() -> None:
 
 
 def _setup_repos(repos: list[dict]) -> None:
-    seen_target_types: set[str] = set()
     # Validate every configured target before any repository is migrated.
     from src.main import LOG_FMT, build_repo_ctxs
     logging.basicConfig(level=logging.INFO, format=LOG_FMT)
     build_repo_ctxs(repos)
+
+    seen_target_types: set[str] = set()
     for repo in repos:
         repo_base = repo["path"]
         print(f"\n=== Repo: {repo['name']} ({repo_base}) ===")
         if not ensure_sync_cfg(repo_base):
             continue
+
         setup_repo(repo_base, seen_target_types)
 
 

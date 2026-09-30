@@ -30,12 +30,14 @@ class WatchdogDetector:
                 repo_ctx.settings["debounce_seconds"],
                 repo_ctx.repo_base,
             )
+
         self._observer.start()
 
     def changed(self, repo_ctx: RepoCtx, now: float) -> bool:
         last = self._last_change[repo_ctx.name]
         if not last or now - last <= float(repo_ctx.settings["debounce_seconds"]):
             return False
+
         self._last_change[repo_ctx.name] = 0.0
         return True
 
@@ -52,6 +54,7 @@ class _MdChangeHandler(FileSystemEventHandler):
     def on_any_event(self, event):
         if event.is_directory:
             return
+
         # A save that writes a temp file and renames it reports the .md name in dest_path.
         paths = (event.src_path, getattr(event, "dest_path", ""))
         if any(path.endswith(".md") and ".git" not in path for path in paths):

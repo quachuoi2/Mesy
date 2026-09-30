@@ -263,13 +263,11 @@ def test_setup_repo_skips_duplicate_target_types(tmp_path, monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(setup, "setup_claude_code_symlinks", lambda d: calls.append(d))
 
-    # First pass: type is claimed.
     seen: set[str] = set()
     setup.setup_repo(repo_base, seen)
     assert calls == [repo_base]
     assert "claude-code" in seen
 
-    # Second pass: same type already seen → skip, no additional call.
     setup.setup_repo(repo_base, seen)
     assert calls == [repo_base]
     out = capsys.readouterr().out

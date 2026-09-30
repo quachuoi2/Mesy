@@ -17,7 +17,6 @@ def tmp_repo(tmp_path, monkeypatch):
     (repo / "claude" / "projects").mkdir(parents=True)
     (repo / "openclaw" / "main").mkdir(parents=True)
 
-    # Patch in config (the single source of truth)
     monkeypatch.setattr("src.config.MESY_DIR", repo)
     monkeypatch.setattr("src.config.REPOS_CFG_PATH", repo / "repos.ini")
 
@@ -54,6 +53,7 @@ def tmp_multi_repo(tmp_path, monkeypatch):
 
     code_repo = tmp_path / "Mesy"
     code_repo.mkdir()
+
     monkeypatch.setattr("src.config.MESY_DIR", code_repo)
     monkeypatch.setattr("src.config.REPOS_CFG_PATH", repos_cfg)
     monkeypatch.setattr("src.main.MESY_DIR", code_repo)
@@ -72,7 +72,7 @@ def mock_git(monkeypatch):
         key = tuple(cmd)
         if key in results:
             return results[key]
-        # Build a generic successful result
+
         return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
 
     mock = MagicMock()

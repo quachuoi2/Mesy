@@ -35,12 +35,14 @@ class TestGetSetHash:
 
     def test_set_then_get_returns_hash(self, state):
         state.set_hash("a/b.md", "content")
+
         expected = state.compute_hash("content")
         assert state.get_hash("a/b.md") == expected
 
     def test_overwrite_updates_hash(self, state):
         state.set_hash("a/b.md", "v1")
         state.set_hash("a/b.md", "v2")
+
         assert state.get_hash("a/b.md") == state.compute_hash("v2")
 
 
@@ -48,7 +50,9 @@ class TestPersistence:
     def test_save_creates_file(self, tmp_path):
         path = tmp_path / ".mesy_sync_hashes.json"
         s = SyncState(hash_file=path)
+
         s.set_hash("x.md", "hello")
+
         assert path.exists()
 
     def test_load_restores_state(self, tmp_path):
@@ -56,24 +60,27 @@ class TestPersistence:
         s1 = SyncState(hash_file=path)
         s1.set_hash("docs/notes.md", "some content")
 
-        # New instance reads from same file
         s2 = SyncState(hash_file=path)
         assert s2.get_hash("docs/notes.md") == s1.compute_hash("some content")
 
     def test_corrupt_file_starts_empty(self, tmp_path):
         path = tmp_path / ".mesy_sync_hashes.json"
         path.write_text("not valid json")
+
         s = SyncState(hash_file=path)
         assert s.get_hash("anything") is None
 
     def test_missing_file_starts_empty(self, tmp_path):
         path = tmp_path / "does_not_exist.json"
+
         s = SyncState(hash_file=path)
         assert s.get_hash("x") is None
 
     def test_set_hash_calls_save(self, tmp_path):
         path = tmp_path / ".mesy_sync_hashes.json"
         s = SyncState(hash_file=path)
+
         s.set_hash("a.md", "content")
+
         raw = json.loads(path.read_text())
         assert "a.md" in raw

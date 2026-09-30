@@ -20,10 +20,13 @@ class PollingDetector:
         interval = max(float(repo_ctx.settings["debounce_seconds"]), POLL_MIN_SECONDS)
         if now - self._last_check[repo_ctx.name] < interval:
             return False
+
         self._last_check[repo_ctx.name] = now
+
         modified_times = get_md_modified_times(repo_ctx.repo_base)
         if modified_times == self._last_change[repo_ctx.name]:
             return False
+
         self._last_change[repo_ctx.name] = modified_times
         return True
 

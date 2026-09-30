@@ -21,12 +21,14 @@ class SyncState:
     def __init__(self, hash_file: Path) -> None:
         self._path = hash_file
         self._hashes: dict[str, str] = {}
+
         self.load()
 
     def load(self) -> None:
         if self._path.exists():
             try:
                 self._hashes = json.loads(self._path.read_text())
+
             except (json.JSONDecodeError, OSError) as exc:
                 log.warning("Could not load sync hashes from %s: %s", self._path, exc)
                 self._hashes = {}
@@ -34,6 +36,7 @@ class SyncState:
     def save(self) -> None:
         try:
             self._path.write_text(json.dumps(self._hashes, indent=2))
+
         except OSError as exc:
             log.warning("Could not save sync hashes to %s: %s", self._path, exc)
 
@@ -66,8 +69,10 @@ class SyncState:
         """
         skip = exclude_keys or set()
         stale = [k for k in self._hashes if k not in skip]
+
         for k in stale:
             del self._hashes[k]
+
         if stale:
             self.save()
             log.info("SyncState: cleared %d stale hash(es)", len(stale))

@@ -31,6 +31,7 @@ class TestLoadSyncCfg:
         """Custom [mesy] values override defaults."""
         sync_cfg_path = tmp_repo / "sync.ini"
         sync_cfg_path.write_text("[mesy]\ndebounce_seconds = 10\npull_interval_seconds = 120\n")
+
         sync_cfg = load_sync_cfg(tmp_repo)
         settings = get_mesy_settings(sync_cfg)
         assert settings["debounce_seconds"] == "10"
@@ -47,6 +48,7 @@ class TestLoadSyncCfg:
             "repo_subdir = claude/projects\n"
             "mapping_cfg = claude/projects.ini\n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         targets = load_targets(sync_cfg)
         assert len(targets) == 1
@@ -62,6 +64,7 @@ class TestLoadSyncCfg:
             "source = /tmp/workspace\n"
             "repo_subdir = openclaw/main\n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         targets = load_targets(sync_cfg)
         assert len(targets) == 1
@@ -77,6 +80,7 @@ class TestLoadSyncCfg:
             "repo_subdir = openclaw/main\n"
             "file_patterns = *.md, *.txt\n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         targets = load_targets(sync_cfg)
         assert targets[0]["file_patterns"] == ["*.md", "*.txt"]
@@ -89,6 +93,7 @@ class TestLoadSyncCfg:
             "source = /tmp/workspace\n"
             "repo_subdir = openclaw/main\n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         targets = load_targets(sync_cfg)
         assert targets[0]["file_patterns"] == ["*.md"]
@@ -102,6 +107,7 @@ class TestLoadSyncCfg:
             "repo_subdir = openclaw/main\n"
             "exclude = TOOLS.md, HEARTBEAT.md\n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         targets = load_targets(sync_cfg)
         assert targets[0]["exclude"] == ["TOOLS.md", "HEARTBEAT.md"]
@@ -116,6 +122,7 @@ class TestSyncMode:
             "source = /tmp/workspace\n"
             "repo_subdir = openclaw/main\n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         targets = load_targets(sync_cfg)
         assert targets[0]["sync_mode"] == "symlink"
@@ -129,6 +136,7 @@ class TestSyncMode:
             "repo_subdir = openclaw/main\n"
             "sync_mode = copy\n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         targets = load_targets(sync_cfg)
         assert targets[0]["sync_mode"] == "copy"
@@ -142,6 +150,7 @@ class TestSyncMode:
             "repo_subdir = openclaw/main\n"
             "sync_mode = symlink\n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         targets = load_targets(sync_cfg)
         assert targets[0]["sync_mode"] == "symlink"
@@ -157,6 +166,7 @@ class TestSyncMode:
             "repo_subdir = openclaw/main\n"
             "sync_mode = hardlink\n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         with caplog.at_level(logging.WARNING, logger="mesy"):
             targets = load_targets(sync_cfg)
@@ -175,6 +185,7 @@ class TestSyncMode:
             "repo_subdir = openclaw/main\n"
             "sync_mode = rsync\n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         with caplog.at_level(logging.WARNING, logger="mesy"):
             load_targets(sync_cfg)
@@ -190,6 +201,7 @@ class TestSyncMode:
             "repo_subdir = openclaw/main\n"
             "sync_mode =  copy  \n"
         )
+
         sync_cfg = load_sync_cfg(tmp_repo)
         targets = load_targets(sync_cfg)
         assert targets[0]["sync_mode"] == "copy"
@@ -304,6 +316,7 @@ class TestRepoCtx:
     def test_instantiation_with_all_fields(self, tmp_path):
         """RepoCtx stores targets and stage_dirs when provided."""
         from unittest.mock import MagicMock
+
         mock_target = MagicMock()
         repo_ctx = RepoCtx(
             name="full-repo",
@@ -323,6 +336,7 @@ class TestLoadProjectMappings:
             "[Workspace]\n"
             "paths = -home-user-Workspace, -home-user2-Workspace\n"
         )
+
         mappings = load_project_mappings(tmp_repo)
         assert mappings["-home-user-Workspace"] == "Workspace"
         assert mappings["-home-user2-Workspace"] == "Workspace"

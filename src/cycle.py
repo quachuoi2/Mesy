@@ -39,14 +39,17 @@ def _scan_target(repo_ctx: RepoCtx, target: SyncTarget) -> bool:
 def pull_repo(repo_ctx: RepoCtx) -> None:
     try:
         git_sync.pull_remote(repo_base=repo_ctx.repo_base)
+
     except (OSError, subprocess.TimeoutExpired) as exc:
         log.warning("[%s] Pull deferred: %s", repo_ctx.name, exc)
 
 
 def first_sync(repo_ctx: RepoCtx) -> None:
     pull_repo(repo_ctx)
+
     if scan_repo(repo_ctx):
         commit_repo(repo_ctx)
+
 
 def scan_repo(repo_ctx: RepoCtx) -> bool:
     results = [_scan_target(repo_ctx, target) for target in repo_ctx.targets]
@@ -56,6 +59,7 @@ def scan_repo(repo_ctx: RepoCtx) -> bool:
 def commit_repo(repo_ctx: RepoCtx) -> None:
     try:
         git_sync.commit_and_push(repo_ctx.stage_dirs, repo_base=repo_ctx.repo_base)
+
     except (OSError, subprocess.TimeoutExpired) as exc:
         log.warning("[%s] Git operation deferred: %s", repo_ctx.name, exc)
 
@@ -64,6 +68,7 @@ def run_intervals(repo_ctx: RepoCtx, now: float, last_pull: dict[str, float], la
     if (now - last_pull[repo_ctx.name]) > float(repo_ctx.settings["pull_interval_seconds"]):
         last_pull[repo_ctx.name] = now
         pull_repo(repo_ctx)
+
     if now - last_scan[repo_ctx.name] > float(repo_ctx.settings["scan_interval_seconds"]):
         last_scan[repo_ctx.name] = now
         scan_repo(repo_ctx)

@@ -36,6 +36,7 @@ def _parse_repo(repos_cfg: ConfigParser, section: str) -> dict | None:
     if not raw_path:
         log.warning("[repos.ini] Section [%s] has no 'path' key, skipping", section)
         return None
+
     path = Path(raw_path).expanduser().resolve()
     if not path.is_dir():
         log.warning(
@@ -44,6 +45,7 @@ def _parse_repo(repos_cfg: ConfigParser, section: str) -> dict | None:
             path,
         )
         return None
+
     return {"name": name, "path": path}
 
 
@@ -55,6 +57,7 @@ def load_sync_cfg(repo_base: Path) -> ConfigParser:
         "pull_interval_seconds": "60",
         "scan_interval_seconds": "60",
     }
+
     sync_cfg = ConfigParser()
     sync_cfg.read_dict({"mesy": defaults})
     if sync_cfg_path.exists():
@@ -74,17 +77,21 @@ def load_project_mappings(repo_base: Path) -> dict[str, str]:
     mapping = {}
     if not projects_cfg_path.exists():
         return mapping
+
     projects_cfg = ConfigParser()
     projects_cfg.read(projects_cfg_path)
+
     for section in projects_cfg.sections():
         if section == "mesy":
             continue
+
         canonical = section
         paths_str = projects_cfg.get(section, "paths", fallback="")
         for raw_name in paths_str.split(","):
             raw_name = raw_name.strip()
             if raw_name:
                 mapping[raw_name] = canonical
+
     return mapping
 
 
@@ -116,6 +123,7 @@ def _target_type(sync_cfg: ConfigParser, section: str) -> str:
     target_type = sync_cfg.get(section, "type", fallback=inferred_type).strip()
     if target_type not in {"claude-code", "generic", "codex"}:
         raise ValueError(f"[{section}] Unknown target type: {target_type}")
+
     return target_type
 
 
@@ -126,12 +134,14 @@ def _target_src(sync_cfg: ConfigParser, section: str, target_type: str) -> Path:
         src = sync_cfg.get(section, "source")
     if not src.strip():
         raise ValueError(f"[{section}] source cannot be empty")
+
     return Path(src).expanduser()
 
 
 def _list_option(sync_cfg: ConfigParser, section: str, option: str, default: list[str]) -> list[str]:
     if not sync_cfg.has_option(section, option):
         return default
+
     return [item.strip() for item in sync_cfg.get(section, option).split(",")]
 
 
@@ -146,4 +156,5 @@ def _sync_mode(sync_cfg: ConfigParser, section: str, name: str) -> str:
             sorted(valid_sync_modes),
         )
         sync_mode = "symlink"
+
     return sync_mode
