@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import logging
+import time
 from logging.handlers import RotatingFileHandler
 
 from src.config import MESY_DIR, load_repos
-from src.cycle import first_sync
+from src.cycle import commit_repo, first_sync, run_intervals, scan_repo
+from src.detectors.base import ChangeDetector
+from src.detectors.poll import PollingDetector
 from src.factory import RepoCtx, build_repo_ctxs
-from src.poll import run_with_polling
-from src.watch import run_with_watchdog
 
 LOG_FMT = "%(asctime)s [%(levelname)s] %(message)s"
+LOOP_TICK_SECONDS = 1.0
 log = logging.getLogger("mesy")
 
 
@@ -21,7 +23,7 @@ def main() -> None:
     _log_startup(repo_ctxs)
     for repo_ctx in repo_ctxs:
         first_sync(repo_ctx)
-    _watch(repo_ctxs)
+    _run(repo_ctxs, _make_detector())
 
 
 def _setup_logging() -> None:
@@ -64,10 +66,29 @@ def _log_startup(repo_ctxs: list[RepoCtx]) -> None:
         )
 
 
-def _watch(repo_ctxs: list[RepoCtx]) -> None:
+def _make_detector() -> ChangeDetector:
     try:
-        import watchdog  # noqa: F401
-        run_with_watchdog(repo_ctxs)
+        from src.detectors.watch import WatchdogDetector
     except ImportError:
         log.info("watchdog not installed, falling back to polling")
-        run_with_polling(repo_ctxs)
+        return PollingDetector()
+    return WatchdogDetector()
+
+
+def _run(repo_ctxs: list[RepoCtx], detector: ChangeDetector) -> None:
+    now = time.time()
+    last_pull = {repo_ctx.name: now for repo_ctx in repo_ctxs}
+    last_scan = dict(last_pull)
+    detector.start(repo_ctxs)
+    try:
+        while True:
+            time.sleep(LOOP_TICK_SECONDS)
+            now = time.time()
+            for repo_ctx in repo_ctxs:
+                if detector.changed(repo_ctx, now) and scan_repo(repo_ctx):
+                    commit_repo(repo_ctx)
+                run_intervals(repo_ctx, now, last_pull, last_scan)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        detector.stop()

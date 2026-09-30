@@ -1,4 +1,4 @@
-"""Tests for mesy/main.py — target building, stage dir collection, mtime scanning, main()."""
+"""Tests for mesy/main.py — target building, stage dir collection, modified-time scanning, main()."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.factory import build_targets, get_all_stage_dirs
-from src.poll import get_md_mtimes
+from src.detectors.poll import get_md_modified_times
 from src.targets.claude_code import ClaudeCodeTarget
 from src.targets.generic import GenericTarget
 
@@ -120,19 +120,19 @@ class TestGetAllStageDirs:
         assert get_all_stage_dirs([]) == []
 
 
-class TestGetMdMtimes:
+class TestGetMdModifiedTimes:
     def test_finds_md_files_in_repo(self, tmp_repo):
-        """get_md_mtimes() returns mtimes for all .md files in MESY_DIR."""
+        """get_md_modified_times() returns last-modified times for all .md files in MESY_DIR."""
         (tmp_repo / "notes.md").write_text("# Notes")
         (tmp_repo / "claude" / "global" / "CLAUDE.md").write_text("# Global")
 
-        result = get_md_mtimes(tmp_repo)
+        result = get_md_modified_times(tmp_repo)
 
         assert any("notes.md" in k for k in result)
         assert any("CLAUDE.md" in k for k in result)
 
     def test_skips_dotgit_directory(self, tmp_repo):
-        """get_md_mtimes() does not include files under .git/."""
+        """get_md_modified_times() does not include files under .git/."""
         git_dir = tmp_repo / ".git" / "COMMIT_EDITMSG"
         git_dir.parent.mkdir(parents=True, exist_ok=True)
         git_dir.write_text("init")
@@ -141,17 +141,17 @@ class TestGetMdMtimes:
         (tmp_repo / ".git" / "hidden.md").write_text("should be ignored")
         (tmp_repo / "visible.md").write_text("should appear")
 
-        result = get_md_mtimes(tmp_repo)
+        result = get_md_modified_times(tmp_repo)
 
         assert not any(".git" in k for k in result)
         assert any("visible.md" in k for k in result)
 
     def test_skips_non_md_files(self, tmp_repo):
-        """get_md_mtimes() ignores .txt and other non-.md files."""
+        """get_md_modified_times() ignores .txt and other non-.md files."""
         (tmp_repo / "readme.txt").write_text("text file")
         (tmp_repo / "data.md").write_text("# Data")
 
-        result = get_md_mtimes(tmp_repo)
+        result = get_md_modified_times(tmp_repo)
 
         assert not any("readme.txt" in k for k in result)
         assert any("data.md" in k for k in result)
@@ -269,263 +269,148 @@ class TestBuildRepoCtxs:
         assert contexts[0].settings["pull_interval_seconds"] == "60"
 
 
-class TestRunWithWatchdog:
-    def test_initializes_observer_for_each_repo(self, tmp_multi_repo, monkeypatch):
-        """run_with_watchdog() schedules observers for all data repos."""
-        pytest.importorskip("watchdog")
-        from src.watch import run_with_watchdog
-        from src.factory import RepoCtx
-        from unittest.mock import patch, MagicMock
+SETTINGS = {"debounce_seconds": "30", "pull_interval_seconds": "60", "scan_interval_seconds": "60"}
 
-        # Mock watchdog Observer class
-        mock_observer = MagicMock()
-        mock_observer_class = MagicMock(return_value=mock_observer)
 
-        # Mock the time module to exit after one iteration
-        call_count = [0]
+def _interrupt_after_sleeps(sleeps_before_stop: int):
+    count = [0]
 
-        def fake_sleep(duration):
-            call_count[0] += 1
-            if call_count[0] > 1:
-                raise KeyboardInterrupt()
-
-        monkeypatch.setattr("src.watch.time.sleep", fake_sleep)
-
-        # Patch watchdog.observers.Observer within run_with_watchdog
-        with patch("src.watch.Observer", mock_observer_class):
-            settings = {
-                "debounce_seconds": "30",
-                "pull_interval_seconds": "60",
-                "scan_interval_seconds": "60",
-            }
-
-            # Create minimal contexts
-            ctx_a = RepoCtx(
-                name="repo-a",
-                repo_base=tmp_multi_repo["repo_a"],
-                targets=[],
-                stage_dirs=[],
-                settings=settings,
-            )
-            ctx_b = RepoCtx(
-                name="repo-b",
-                repo_base=tmp_multi_repo["repo_b"],
-                targets=[],
-                stage_dirs=[],
-                settings=settings,
-            )
-
-            run_with_watchdog([ctx_a, ctx_b])
-
-            # Verify observer was scheduled for both repos
-            assert mock_observer.schedule.call_count == 2
-            mock_observer.start.assert_called_once()
-            mock_observer.join.assert_called_once()
-
-    def test_handles_keyboard_interrupt(self, tmp_multi_repo, monkeypatch):
-        """run_with_watchdog() stops observer and exits cleanly on KeyboardInterrupt."""
-        pytest.importorskip("watchdog")
-        from src.watch import run_with_watchdog
-        from src.factory import RepoCtx
-        from unittest.mock import patch, MagicMock
-
-        mock_observer = MagicMock()
-        mock_observer_class = MagicMock(return_value=mock_observer)
-
-        def fake_sleep(duration):
+    def fake_sleep(_):
+        count[0] += 1
+        if count[0] > sleeps_before_stop:
             raise KeyboardInterrupt()
 
-        monkeypatch.setattr("src.watch.time.sleep", fake_sleep)
+    return fake_sleep
 
-        settings = {
-            "debounce_seconds": "30",
-            "pull_interval_seconds": "60",
-            "scan_interval_seconds": "60",
-        }
 
-        repo_ctx = RepoCtx(
-            name="repo-a",
-            repo_base=tmp_multi_repo["repo_a"],
-            targets=[],
-            stage_dirs=[],
-            settings=settings,
-        )
+class TestWatchdogDetector:
+    def _start(self, repo_ctxs, monkeypatch):
+        pytest.importorskip("watchdog")
+        from src.detectors.watch import WatchdogDetector
 
-        # Should not raise, should stop observer
-        with patch("src.watch.Observer", mock_observer_class):
-            run_with_watchdog([repo_ctx])
+        observer = MagicMock()
+        monkeypatch.setattr("src.detectors.watch.Observer", lambda: observer)
+        monkeypatch.setattr("src.detectors.watch.time.time", lambda: 100.0)
+        detector = WatchdogDetector()
+        detector.start(repo_ctxs)
+        return detector, observer
 
-        mock_observer.stop.assert_called_once()
-        mock_observer.join.assert_called_once()
+    def test_schedules_observer_for_each_repo(self, tmp_multi_repo, monkeypatch):
+        """start() schedules one watch per data repo and starts the observer."""
+        from src.factory import RepoCtx
+
+        ctx_a = RepoCtx(name="repo-a", repo_base=tmp_multi_repo["repo_a"], settings=SETTINGS)
+        ctx_b = RepoCtx(name="repo-b", repo_base=tmp_multi_repo["repo_b"], settings=SETTINGS)
+
+        _, observer = self._start([ctx_a, ctx_b], monkeypatch)
+
+        assert observer.schedule.call_count == 2
+        observer.start.assert_called_once()
+
+    def test_changed_waits_for_debounce_and_reports_once(self, tmp_multi_repo, monkeypatch):
+        """changed() is True once the repo has been quiet for debounce_seconds, then resets."""
+        from types import SimpleNamespace
+        from src.factory import RepoCtx
+
+        repo = tmp_multi_repo["repo_a"]
+        repo_ctx = RepoCtx(name="repo-a", repo_base=repo, settings=SETTINGS)
+        detector, observer = self._start([repo_ctx], monkeypatch)
+        handler = observer.schedule.call_args.args[0]
+
+        handler.on_any_event(SimpleNamespace(is_directory=False, src_path=str(repo / "notes.md")))
+
+        assert not detector.changed(repo_ctx, 120.0)
+        assert detector.changed(repo_ctx, 131.0)
+        assert not detector.changed(repo_ctx, 200.0)
 
     def test_rename_onto_md_file_counts_as_change(self, tmp_multi_repo, monkeypatch):
         """A save that writes a temp file and renames it onto a .md file marks the repo changed."""
-        pytest.importorskip("watchdog")
         from types import SimpleNamespace
-        from src.watch import run_with_watchdog
         from src.factory import RepoCtx
 
-        observer = MagicMock()
-        monkeypatch.setattr("src.watch.Observer", lambda: observer)
-
-        def stop(_):
-            raise KeyboardInterrupt()
-
-        monkeypatch.setattr("src.watch.time.sleep", stop)
         repo = tmp_multi_repo["repo_a"]
-        repo_ctx = RepoCtx(name="repo-a", repo_base=repo, settings={
-            "debounce_seconds": "30", "pull_interval_seconds": "60", "scan_interval_seconds": "60",
-        })
-        run_with_watchdog([repo_ctx])
-
+        repo_ctx = RepoCtx(name="repo-a", repo_base=repo, settings=SETTINGS)
+        detector, observer = self._start([repo_ctx], monkeypatch)
         handler = observer.schedule.call_args.args[0]
-        clock = MagicMock(return_value=100.0)
-        monkeypatch.setattr("src.watch.time.time", clock)
+
         handler.on_any_event(SimpleNamespace(
             is_directory=False, src_path=str(repo / ".notes.tmp"), dest_path=str(repo / "notes.md"),
         ))
-        clock.assert_called_once()
+
+        assert detector.changed(repo_ctx, 131.0)
 
 
-class TestRunWithPolling:
-    def test_polls_on_mtime_changes(self, tmp_multi_repo, monkeypatch):
-        """run_with_polling() detects .md file changes and calls commit_and_push."""
-        from src.poll import run_with_polling
+class TestPollingDetector:
+    def test_reports_modified_time_change_after_poll_interval(self, tmp_multi_repo, monkeypatch):
+        """changed() rescans only after the poll interval and reports each modified-time change once."""
+        from src.detectors.poll import POLL_MIN_SECONDS, PollingDetector
         from src.factory import RepoCtx
 
-        settings = {
-            "debounce_seconds": "1",
-            "pull_interval_seconds": "60",
-            "scan_interval_seconds": "60",
-        }
+        modified_times = iter([{"a.md": 1.0}, {"a.md": 2.0}, {"a.md": 2.0}])
+        monkeypatch.setattr("src.detectors.poll.get_md_modified_times", lambda repo_base: next(modified_times))
+        monkeypatch.setattr("src.detectors.poll.time.time", lambda: 0.0)
+        repo_ctx = RepoCtx(name="repo-a", repo_base=tmp_multi_repo["repo_a"], settings=SETTINGS)
+        detector = PollingDetector()
+        detector.start([repo_ctx])
 
-        repo_ctx = RepoCtx(
-            name="repo-a",
-            repo_base=tmp_multi_repo["repo_a"],
-            targets=[],
-            stage_dirs=["openclaw/main/"],
-            settings=settings,
-        )
+        assert not detector.changed(repo_ctx, POLL_MIN_SECONDS - 1)
+        assert detector.changed(repo_ctx, POLL_MIN_SECONDS)
+        assert not detector.changed(repo_ctx, 2 * POLL_MIN_SECONDS)
+
+
+class TestRun:
+    def test_commits_when_detector_reports_change(self, tmp_multi_repo, monkeypatch):
+        """_run() scans and commits a repo when its detector reports a change."""
+        from src.factory import RepoCtx
+        from src.main import _run
 
         commit_mock = MagicMock()
-        pull_mock = MagicMock()
         monkeypatch.setattr("src.git_sync.commit_and_push", commit_mock)
-        monkeypatch.setattr("src.git_sync.pull_remote", pull_mock)
+        monkeypatch.setattr("src.git_sync.pull_remote", MagicMock())
+        monkeypatch.setattr("src.main.time.sleep", _interrupt_after_sleeps(1))
+        repo_ctx = RepoCtx(name="repo-a", repo_base=tmp_multi_repo["repo_a"],
+                           stage_dirs=["openclaw/main/"], settings=SETTINGS)
+        detector = MagicMock()
+        detector.changed.return_value = True
 
-        # Mock get_md_mtimes to simulate a change on the second call
-        call_count = [0]
-        initial_mtimes = {"repo_a/test.md": 1000.0}
-        modified_mtimes = {"repo_a/test.md": 2000.0}
+        _run([repo_ctx], detector)
 
-        def fake_get_md_mtimes(repo_base=None):
-            call_count[0] += 1
-            # First call (initialization): return initial mtimes
-            # Second call (first loop iteration): return modified mtimes (change detected)
-            # Third call: return modified mtimes again (no change)
-            if call_count[0] == 1:
-                return initial_mtimes
-            else:
-                return modified_mtimes
+        commit_mock.assert_called_once()
 
-        monkeypatch.setattr("src.poll.get_md_mtimes", fake_get_md_mtimes)
-
-        sleep_count = [0]
-
-        def fake_sleep(duration):
-            sleep_count[0] += 1
-            if sleep_count[0] > 2:
-                # Exit after two sleep calls (initialization + first check + exit)
-                raise KeyboardInterrupt()
-
-        monkeypatch.setattr("src.poll.time.sleep", fake_sleep)
-
-        run_with_polling([repo_ctx])
-
-        # commit_and_push should be called when mtime changes
-        commit_mock.assert_called()
-
-    def test_handles_keyboard_interrupt_cleanly(self, tmp_multi_repo, monkeypatch):
-        """run_with_polling() exits gracefully on KeyboardInterrupt."""
-        from src.poll import run_with_polling
+    def test_stops_detector_on_keyboard_interrupt(self, tmp_multi_repo, monkeypatch):
+        """_run() exits cleanly on KeyboardInterrupt and stops the detector."""
         from src.factory import RepoCtx
+        from src.main import _run
 
-        settings = {
-            "debounce_seconds": "1",
-            "pull_interval_seconds": "60",
-            "scan_interval_seconds": "60",
-        }
+        monkeypatch.setattr("src.main.time.sleep", _interrupt_after_sleeps(0))
+        repo_ctx = RepoCtx(name="repo-a", repo_base=tmp_multi_repo["repo_a"], settings=SETTINGS)
+        detector = MagicMock()
 
-        repo_ctx = RepoCtx(
-            name="repo-a",
-            repo_base=tmp_multi_repo["repo_a"],
-            targets=[],
-            stage_dirs=[],
-            settings=settings,
-        )
+        _run([repo_ctx], detector)
 
-        def fake_sleep(duration):
-            raise KeyboardInterrupt()
-
-        monkeypatch.setattr("src.poll.time.sleep", fake_sleep)
-
-        # Should not raise
-        run_with_polling([repo_ctx])
+        detector.start.assert_called_once_with([repo_ctx])
+        detector.stop.assert_called_once()
 
     def test_per_repo_pull_interval_respected(self, tmp_multi_repo, monkeypatch):
-        """run_with_polling() uses each repo_ctx's own pull_interval_seconds, not the global."""
-        from src.poll import run_with_polling
+        """_run() uses each repo_ctx's own pull_interval_seconds."""
         from src.factory import RepoCtx
+        from src.main import _run
 
-        # repo_a has a very short pull interval; repo_b has a very long one.
-        ctx_a = RepoCtx(
-            name="repo-a",
-            repo_base=tmp_multi_repo["repo_a"],
-            targets=[],
-            stage_dirs=[],
-            settings={"debounce_seconds": "1", "pull_interval_seconds": "1", "scan_interval_seconds": "9999"},
-        )
-        ctx_b = RepoCtx(
-            name="repo-b",
-            repo_base=tmp_multi_repo["repo_b"],
-            targets=[],
-            stage_dirs=[],
-            settings={"debounce_seconds": "1", "pull_interval_seconds": "9999", "scan_interval_seconds": "9999"},
-        )
-
+        ctx_a = RepoCtx(name="repo-a", repo_base=tmp_multi_repo["repo_a"],
+                        settings={"pull_interval_seconds": "1", "scan_interval_seconds": "9999"})
+        ctx_b = RepoCtx(name="repo-b", repo_base=tmp_multi_repo["repo_b"],
+                        settings={"pull_interval_seconds": "9999", "scan_interval_seconds": "9999"})
         pull_mock = MagicMock()
         monkeypatch.setattr("src.git_sync.pull_remote", pull_mock)
-        monkeypatch.setattr("src.git_sync.commit_and_push", MagicMock())
-        monkeypatch.setattr("src.poll.get_md_mtimes", lambda repo_base=None: {})
+        monkeypatch.setattr("src.main.time.time", MagicMock(side_effect=[0.0, 100.0]))
+        monkeypatch.setattr("src.main.time.sleep", _interrupt_after_sleeps(1))
+        detector = MagicMock()
+        detector.changed.return_value = False
 
-        # Advance time between init and loop tick so pull checks fire.
-        call_count = [0]
+        _run([ctx_a, ctx_b], detector)
 
-        def fake_time():
-            call_count[0] += 1
-            # First N calls (init of last_pull + last_scan) return t=0.
-            # Later calls (inside loop) return t=100 so (now - last_pull) = 100.
-            if call_count[0] <= 3:
-                return 0.0
-            return 100.0
-
-        sleep_count = [0]
-
-        def fake_sleep(duration):
-            sleep_count[0] += 1
-            if sleep_count[0] >= 2:
-                raise KeyboardInterrupt()
-
-        monkeypatch.setattr("src.poll.time.sleep", fake_sleep)
-        monkeypatch.setattr("src.poll.time.time", fake_time)
-
-        run_with_polling([ctx_a, ctx_b])
-
-        # pull_remote should only be called for repo-a (short interval) not repo-b (long interval).
-        called_dirs = [call.kwargs.get("repo_base") or call.args[0] if call.args else call.kwargs.get("repo_base") for call in pull_mock.call_args_list]
-        # Normalise: pull_remote is called as pull_remote(repo_base=repo_ctx.repo_base)
-        called_dirs = [c["repo_base"] for c in [call[1] for call in pull_mock.call_args_list]]
-        assert tmp_multi_repo["repo_a"] in called_dirs
-        assert tmp_multi_repo["repo_b"] not in called_dirs
+        pulled = [call.kwargs["repo_base"] for call in pull_mock.call_args_list]
+        assert pulled == [tmp_multi_repo["repo_a"]]
 
 
 class TestMain:
@@ -563,8 +448,7 @@ class TestMain:
         monkeypatch.setattr("src.factory.build_targets", patched_build)
 
         # Prevent the watchdog/polling loop from running
-        monkeypatch.setattr("src.main.run_with_watchdog", lambda *a, **kw: None)
-        monkeypatch.setattr("src.main.run_with_polling", lambda *a, **kw: None)
+        monkeypatch.setattr("src.main._run", lambda *a, **kw: None)
 
         # repos.ini is required — point it at tmp_repo.
         monkeypatch.setattr(
@@ -593,8 +477,7 @@ class TestMain:
             (repo_path / "sync.ini").write_text(sync_cfg_text)
 
         # Mock the watch loop
-        monkeypatch.setattr("src.main.run_with_watchdog", lambda *a, **kw: None)
-        monkeypatch.setattr("src.main.run_with_polling", lambda *a, **kw: None)
+        monkeypatch.setattr("src.main._run", lambda *a, **kw: None)
 
         # Mock git operations
         pull_mock = MagicMock()
