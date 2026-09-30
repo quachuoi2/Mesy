@@ -158,7 +158,7 @@ class TestAdoptDirectory:
         def fake_merge(local, repo):
             merge_calls.append((local, repo))
 
-        monkeypatch.setattr("src.targets.generic.merge_conflicting_file", fake_merge)
+        monkeypatch.setattr("src.targets.base.merge_conflicting_file", fake_merge)
 
         # Write divergent content to both source and repo
         src_file = generic_env["src"] / "notes.md"

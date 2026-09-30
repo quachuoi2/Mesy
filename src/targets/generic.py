@@ -195,29 +195,7 @@ class GenericTarget(SyncTarget):
             if self.sync_mode == "copy":
                 self._sync_pair_copy(pair)
             else:
-                self._sync_pair_symlink(pair)
-
-    def _sync_pair_symlink(self, pair: FilePair) -> None:
-        """Sync a single file pair in symlink mode."""
-        src = pair.src_file
-        repo = pair.repo_file
-
-        if src.is_symlink():
-            return
-
-        if src.is_file():
-            if not repo.exists():
-                shutil.copy2(src, repo)
-                log.info("[%s] Copied %s into repo", self.name, src.name)
-            elif not filecmp.cmp(src, repo, shallow=False):
-                merge_conflicting_file(local=src, repo=repo)
-
-            src.unlink()
-            src.symlink_to(repo)
-            log.info("[%s] Symlinked %s", self.name, src.name)
-        elif repo.exists() and not src.exists():
-            src.symlink_to(repo)
-            log.info("[%s] Symlinked %s (from repo)", self.name, repo.name)
+                self._sync_file_symlink(pair.src_file, pair.repo_file, label=f"{self.name} {pair.src_file.name}")
 
     def _sync_pair_copy(self, pair: FilePair) -> None:
         """Sync a single file pair in copy mode using three-way hash comparison."""

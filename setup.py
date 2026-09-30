@@ -35,7 +35,6 @@ from src.targets._merge import merge_conflicting_file
 from src.targets.base import all_copied, merge_into
 from src.targets.claude_code import CLAUDE_DIR, migrate_repo_names
 from src.targets.generic import is_excluded, matches_patterns
-from src.timestamp import now_iso
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -61,7 +60,7 @@ SYNC_CFG_TEMPLATE = f"""\
 """
 
 
-def log(tag: str, msg: str) -> None:
+def print_status(tag: str, msg: str) -> None:
     print(f"[{tag}] {msg}")
 
 
@@ -84,14 +83,14 @@ def _setup_git_sync(repo_base: Path) -> None:
     URL, warns that sync won't run until git is configured manually.
     """
     if (repo_base / ".git").exists():
-        log("ok", f"{repo_base} is already a git repo — skipping remote setup")
+        print_status("ok", f"{repo_base} is already a git repo — skipping remote setup")
         return
 
     url = input(
         "Git remote URL for this repo (e.g. git@github.com:you/repo.git, blank to skip): "
     ).strip()
     if not url:
-        log("warn", f"No remote configured — {repo_base} will not sync until you set one up")
+        print_status("warn", f"No remote configured — {repo_base} will not sync until you set one up")
         return
 
     if not any(repo_base.iterdir()):
@@ -107,25 +106,25 @@ def _clone(repo_base: Path, url: str) -> None:
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        log("error", f"git clone failed: {result.stderr.strip()}")
+        print_status("error", f"git clone failed: {result.stderr.strip()}")
         repo_base.mkdir(parents=True, exist_ok=True)
         return
 
-    log("ok", f"Cloned {url} into {repo_base}")
+    print_status("ok", f"Cloned {url} into {repo_base}")
 
 
 def _init_with_remote(repo_base: Path, url: str) -> None:
     if git("init", repo_base=repo_base).returncode != 0:
-        log("error", "git init failed")
+        print_status("error", "git init failed")
         return
 
     if git("remote", "add", "origin", url, repo_base=repo_base).returncode != 0:
-        log("error", "git remote add failed")
+        print_status("error", "git remote add failed")
         return
 
     fetch_result = git("fetch", "origin", repo_base=repo_base)
     if fetch_result.returncode != 0:
-        log("warn", f"git fetch failed: {fetch_result.stderr.strip()} — leaving repo initialized")
+        print_status("warn", f"git fetch failed: {fetch_result.stderr.strip()} — leaving repo initialized")
         return
 
     head_result = git("symbolic-ref", "refs/remotes/origin/HEAD", repo_base=repo_base)
@@ -138,11 +137,11 @@ def _init_with_remote(repo_base: Path, url: str) -> None:
 
     pull_result = git("pull", "origin", branch, "--allow-unrelated-histories", repo_base=repo_base)
     if pull_result.returncode != 0:
-        log("warn", f"git pull failed: {pull_result.stderr.strip()}")
+        print_status("warn", f"git pull failed: {pull_result.stderr.strip()}")
         return
 
     git("branch", f"--set-upstream-to=origin/{branch}", branch, repo_base=repo_base)
-    log("ok", f"Initialized {repo_base} with remote {url} (branch {branch})")
+    print_status("ok", f"Initialized {repo_base} with remote {url} (branch {branch})")
 
 
 def _repo_path_valid(raw: str) -> Path | None:
@@ -155,13 +154,13 @@ def _repo_path_valid(raw: str) -> Path | None:
         resolved = candidate.resolve()
 
     except OSError as e:
-        log("error", f"Cannot resolve path: {e}")
+        print_status("error", f"Cannot resolve path: {e}")
         return None
 
     repo_resolved = MESY_DIR.resolve()
     try:
         resolved.relative_to(repo_resolved)
-        log("error", f"Data repo path resolves inside the Mesy code dir: {resolved}")
+        print_status("error", f"Data repo path resolves inside the Mesy code dir: {resolved}")
         return None
 
     except ValueError:
@@ -193,14 +192,14 @@ def prompt_repos_cfg() -> list[dict]:
         section = f"repo:{name}"
         repos_cfg[section] = {"path": str(resolved)}
         new_repos.append({"name": name, "path": resolved})
-        log("ok", f"Queued [{section}] path = {resolved}")
+        print_status("ok", f"Queued [{section}] path = {resolved}")
 
         if input("Add another data repo? [y/N]: ").strip().lower() != "y":
             break
 
     if new_repos:
         _write_repos_cfg(repos_cfg)
-        log("ok", f"Wrote {len(new_repos)} new repo(s) to repos.ini")
+        print_status("ok", f"Wrote {len(new_repos)} new repo(s) to repos.ini")
 
     return existing + new_repos
 
@@ -221,11 +220,11 @@ def _prompt_name(taken: set[str]) -> str:
     while True:
         name = input("Repo name (e.g. alfred-memory): ").strip()
         if not name:
-            log("error", "Name cannot be empty")
+            print_status("error", "Name cannot be empty")
             continue
 
         if name in taken:
-            log("error", f"Name '{name}' already registered")
+            print_status("error", f"Name '{name}' already registered")
             continue
 
         return name
@@ -235,7 +234,7 @@ def _prompt_path() -> Path:
     while True:
         raw_path = input("Repo path: ").strip()
         if not raw_path:
-            log("error", "Path cannot be empty")
+            print_status("error", "Path cannot be empty")
             continue
 
         resolved = _repo_path_valid(raw_path)
@@ -247,10 +246,10 @@ def _prompt_path() -> Path:
             if create in ("", "y"):
                 resolved.mkdir(parents=True, exist_ok=True)
             else:
-                log("error", "Skipping — path must exist")
+                print_status("error", "Skipping — path must exist")
                 continue
         elif not resolved.is_dir():
-            log("error", f"{resolved} is not a directory")
+            print_status("error", f"{resolved} is not a directory")
             continue
 
         return resolved
@@ -266,15 +265,15 @@ def ensure_sync_cfg(repo_base: Path) -> bool:
     if sync_cfg_path.exists():
         return True
 
-    log("warn", f"{sync_cfg_path} is missing")
+    print_status("warn", f"{sync_cfg_path} is missing")
     create = input("Create a template sync.ini? [Y/n]: ").strip().lower()
     if create in ("", "y"):
         repo_base.mkdir(parents=True, exist_ok=True)
         sync_cfg_path.write_text(SYNC_CFG_TEMPLATE)
-        log("ok", f"Wrote template sync.ini to {sync_cfg_path} — edit it before running the daemon")
+        print_status("ok", f"Wrote template sync.ini to {sync_cfg_path} — edit it before running the daemon")
         return True
 
-    log("skip", f"Skipping {repo_base} — no sync.ini")
+    print_status("skip", f"Skipping {repo_base} — no sync.ini")
     return False
 
 
@@ -289,10 +288,10 @@ def _already_linked(link: Path, target: Path, label: str) -> bool:
         return False
 
     if link.resolve() == target.resolve():
-        log("ok", f"Symlink already exists: {label}")
+        print_status("ok", f"Symlink already exists: {label}")
         return True
 
-    log("relink", f"Updating symlink: {label} -> {target}")
+    print_status("relink", f"Updating symlink: {label} -> {target}")
     link.unlink()
     return False
 
@@ -312,25 +311,25 @@ def make_file_symlink(link: Path, target: Path) -> None:
     if IS_WINDOWS:
         try:
             os.symlink(target, link)
-            log("ok", f"Symlinked {link.name}")
+            print_status("ok", f"Symlinked {link.name}")
 
         except OSError:
             shutil.copy2(target, link)
-            log("warn", f"Symlink failed for {link.name}, copied instead (edits won't sync back!)")
+            print_status("warn", f"Symlink failed for {link.name}, copied instead (edits won't sync back!)")
     else:
         os.symlink(target, link)
-        log("ok", f"Symlinked {link.name}")
+        print_status("ok", f"Symlinked {link.name}")
 
 
 def _move_file_into_repo(link: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     if not target.exists():
         shutil.copy2(link, target)
-        log("migrate", f"Copied {link.name} into repo")
+        print_status("migrate", f"Copied {link.name} into repo")
     elif not filecmp.cmp(link, target, shallow=False):
         merge_conflicting_file(local=link, repo=target)
     else:
-        log("ok", f"{link.name} identical, skipping")
+        print_status("ok", f"{link.name} identical, skipping")
 
     link.unlink()
 
@@ -349,29 +348,29 @@ def make_symlink(link: Path, target: Path) -> None:
     if IS_WINDOWS:
         try:
             os.symlink(target, link, target_is_directory=True)
-            log("ok", f"Symlinked {link.name}")
+            print_status("ok", f"Symlinked {link.name}")
 
         except OSError:
-            log("warn", "Symlink failed (enable Developer Mode in Windows Settings)")
-            log("info", "Trying directory junction instead...")
+            print_status("warn", "Symlink failed (enable Developer Mode in Windows Settings)")
+            print_status("info", "Trying directory junction instead...")
             subprocess.run(
                 ["cmd", "/c", "mklink", "/J", str(link), str(target)],
                 check=True,
             )
-            log("ok", f"Junction created for {link.name}")
+            print_status("ok", f"Junction created for {link.name}")
     else:
         os.symlink(target, link)
-        log("ok", f"Symlinked {link.name}")
+        print_status("ok", f"Symlinked {link.name}")
 
 
 def _move_dir_into_repo(link: Path, target: Path) -> bool:
     """Copy a folder, subfolders included, into the repo; delete it only if every file arrived."""
-    log("migrate", f"Moving existing memory from {link}")
+    print_status("migrate", f"Moving existing memory from {link}")
     target.mkdir(parents=True, exist_ok=True)
     merge_into(link, target)
 
     if not all_copied(link, target):
-        log("error", f"Not every file reached {target}; leaving {link} in place")
+        print_status("error", f"Not every file reached {target}; leaving {link} in place")
         return False
 
     shutil.rmtree(link)
@@ -406,8 +405,8 @@ def _link_project(repo_base: Path, project_dir: Path, mapping: dict[str, str]) -
         _link_to_canonical(project_dir, repo_base / "claude" / "projects" / mapping[raw_name])
     elif memory_path.is_dir():
         add_pending(repo_base, raw_name)
-        log("pending", f"{raw_name} has no mapping — recorded in .pending file")
-        log("info", f"  Add to projects.ini: [YourProjectName] / paths = {raw_name}")
+        print_status("pending", f"{raw_name} has no mapping — recorded in .pending file")
+        print_status("info", f"  Add to projects.ini: [YourProjectName] / paths = {raw_name}")
 
 
 def _prelink_mapped(repo_base: Path, claude_projects_dir: Path, mapping: dict[str, str]) -> None:
@@ -421,7 +420,7 @@ def _prelink_mapped(repo_base: Path, claude_projects_dir: Path, mapping: dict[st
         if canonical_dir.exists():
             claude_project_dir.mkdir(parents=True, exist_ok=True)
             _link_to_canonical(claude_project_dir, canonical_dir)
-            log("ok", f"Pre-linked {raw_name} -> {canonical}")
+            print_status("ok", f"Pre-linked {raw_name} -> {canonical}")
 
 
 def _link_to_canonical(project_dir: Path, canonical_dir: Path) -> None:
@@ -438,10 +437,10 @@ def setup_generic_target(repo_base: Path, name: str, src: Path, repo_subdir: str
     target_dir = repo_base / repo_subdir
 
     if not src.exists():
-        log("skip", f"[{name}] Source {src} does not exist")
+        print_status("skip", f"[{name}] Source {src} does not exist")
         return
 
-    log("info", f"[{name}] Setting up: {src} -> {target_dir}")
+    print_status("info", f"[{name}] Setting up: {src} -> {target_dir}")
     target_dir.mkdir(parents=True, exist_ok=True)
     _adopt_dir(src, target_dir, name, file_patterns, exclude)
 
@@ -451,7 +450,7 @@ def _adopt_dir(src: Path, dest: Path, name: str, file_patterns: list[str], exclu
 
     for item in sorted(src.iterdir()):
         if is_excluded(item.name, exclude):
-            log("skip", f"  [{name}] Excluded: {item.name}")
+            print_status("skip", f"  [{name}] Excluded: {item.name}")
             continue
 
         if item.is_symlink():
@@ -473,24 +472,24 @@ def _adopt_dir(src: Path, dest: Path, name: str, file_patterns: list[str], exclu
 def _adopt_file(item: Path, repo_file: Path, name: str) -> None:
     if not repo_file.exists():
         shutil.copy2(item, repo_file)
-        log("migrate", f"  [{name}] Copied {item.name}")
+        print_status("migrate", f"  [{name}] Copied {item.name}")
     elif not filecmp.cmp(item, repo_file, shallow=False):
         merge_conflicting_file(local=item, repo=repo_file)
     else:
-        log("ok", f"  [{name}] {item.name} identical")
+        print_status("ok", f"  [{name}] {item.name} identical")
 
     item.unlink()
     if IS_WINDOWS:
         try:
             os.symlink(repo_file, item)
-            log("ok", f"  [{name}] Symlinked {item.name}")
+            print_status("ok", f"  [{name}] Symlinked {item.name}")
 
         except OSError:
             shutil.copy2(repo_file, item)
-            log("warn", f"  [{name}] Symlink failed for {item.name}, copied instead")
+            print_status("warn", f"  [{name}] Symlink failed for {item.name}, copied instead")
     else:
         os.symlink(repo_file, item)
-        log("ok", f"  [{name}] Symlinked {item.name}")
+        print_status("ok", f"  [{name}] Symlinked {item.name}")
 
 
 def _link_repo_item(repo_file: Path, src: Path, name: str, file_patterns: list[str],
@@ -515,7 +514,7 @@ def _link_repo_item(repo_file: Path, src: Path, name: str, file_patterns: list[s
         return
 
     os.symlink(repo_file, src_file)
-    log("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
+    print_status("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
 
 
 def setup_repo(repo_base: Path, seen_target_types: set[str]) -> None:
@@ -544,7 +543,10 @@ def _claim_target(target_def: dict, seen_target_types: set[str]) -> bool:
     # Generic and Codex instances are deduplicated by source ownership instead.
     key = target_type if target_type == "claude-code" else f"{target_type}:{target_def['source'].absolute()}"
     if key in seen_target_types:
-        log("warn", f"[{target_def['name']}] target type '{target_type}' already handled by an earlier repo — skipping")
+        print_status(
+            "warn",
+            f"[{target_def['name']}] target type '{target_type}' already handled by an earlier repo — skipping",
+        )
         return False
 
     seen_target_types.add(key)
@@ -559,7 +561,7 @@ def _setup_codex(target_def: dict, repo_base: Path) -> None:
 
 def _setup_generic(target_def: dict, repo_base: Path) -> None:
     if target_def.get("sync_mode") == "copy":
-        log(
+        print_status(
             "info",
             f"[{target_def['name']}] Copy-mode target — skipping symlink setup. "
             "Will be initialized on first daemon run.",
@@ -581,7 +583,7 @@ def install_systemd_service() -> None:
     """Install and enable the systemd user service (Linux only)."""
     service_template = MESY_DIR / "mesy.service"
     if not service_template.exists():
-        log("skip", "Service template not found")
+        print_status("skip", "Service template not found")
         return
 
     user_service_dir = Path.home() / ".config" / "systemd" / "user"
@@ -595,7 +597,7 @@ def install_systemd_service() -> None:
     subprocess.run(
         ["systemctl", "--user", "enable", "--now", "mesy"], check=False
     )
-    log("ok", "Systemd service installed and started")
+    print_status("ok", "Systemd service installed and started")
 
     result = subprocess.run(
         ["loginctl", "enable-linger", os.environ.get("USER", "")],
@@ -603,7 +605,7 @@ def install_systemd_service() -> None:
         check=False,
     )
     if result.returncode != 0:
-        log("warn", "Could not enable lingering (may need sudo)")
+        print_status("warn", "Could not enable lingering (may need sudo)")
 
 
 def install_task_scheduler(python_exe: str) -> None:
@@ -631,16 +633,16 @@ def install_task_scheduler(python_exe: str) -> None:
     )
 
     if result.returncode == 0:
-        log("ok", "Task Scheduler task created (runs at logon)")
+        print_status("ok", "Task Scheduler task created (runs at logon)")
         subprocess.run(
             ["schtasks", "/Run", "/TN", task_name],
             capture_output=True,
             check=False,
         )
-        log("ok", "Sync daemon started")
+        print_status("ok", "Sync daemon started")
     else:
-        log("warn", f"Task Scheduler setup failed: {result.stderr.strip()}")
-        log("info", f"You can run manually: {python_exe} {sync_script}")
+        print_status("warn", f"Task Scheduler setup failed: {result.stderr.strip()}")
+        print_status("info", f"You can run manually: {python_exe} {sync_script}")
 
 
 def install_daemon() -> None:
