@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.factory import RepoCtx
 from src.config import (
     get_mesy_settings,
@@ -149,42 +151,20 @@ class TestSyncMode:
         targets = load_targets(sync_cfg)
         assert targets[0]["sync_mode"] == "symlink"
 
-    def test_sync_mode_invalid_warns_and_defaults_to_symlink(self, tmp_repo, caplog):
-        """Invalid sync_mode emits a warning and falls back to 'symlink'."""
-        import logging
-
+    def test_sync_mode_invalid_raises(self, tmp_repo):
+        """Invalid sync_mode is a misconfiguration: load_targets() raises, naming the bad value."""
         sync_cfg_path = tmp_repo / "sync.ini"
         sync_cfg_path.write_text(
             "[target:openclaw]\n"
             "source = /tmp/workspace\n"
             "repo_subdir = openclaw/main\n"
-            "sync_mode = hardlink\n"
+            "sync_mode = cpoy\n"
         )
 
         sync_cfg = load_sync_cfg(tmp_repo)
-        with caplog.at_level(logging.WARNING, logger="mesy"):
-            targets = load_targets(sync_cfg)
 
-        assert targets[0]["sync_mode"] == "symlink"
-        assert any("Invalid sync_mode" in r.message for r in caplog.records)
-
-    def test_sync_mode_invalid_message_includes_value(self, tmp_repo, caplog):
-        """Warning message for invalid sync_mode includes the bad value."""
-        import logging
-
-        sync_cfg_path = tmp_repo / "sync.ini"
-        sync_cfg_path.write_text(
-            "[target:openclaw]\n"
-            "source = /tmp/workspace\n"
-            "repo_subdir = openclaw/main\n"
-            "sync_mode = rsync\n"
-        )
-
-        sync_cfg = load_sync_cfg(tmp_repo)
-        with caplog.at_level(logging.WARNING, logger="mesy"):
+        with pytest.raises(ValueError, match="cpoy"):
             load_targets(sync_cfg)
-
-        assert any("rsync" in r.message for r in caplog.records)
 
     def test_sync_mode_whitespace_is_stripped(self, tmp_repo):
         """sync_mode values with surrounding whitespace are accepted."""

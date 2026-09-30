@@ -117,7 +117,7 @@ def _parse_target(sync_cfg: ConfigParser, section: str) -> dict:
         target_def["mapping_cfg"] = sync_cfg.get(section, "mapping_cfg")
     target_def["file_patterns"] = _list_option(sync_cfg, section, "file_patterns", list(DEFAULT_FILE_PATTERNS))
     target_def["exclude"] = _list_option(sync_cfg, section, "exclude", [])
-    target_def["sync_mode"] = _sync_mode(sync_cfg, section, name)
+    target_def["sync_mode"] = _sync_mode(sync_cfg, section)
     return target_def
 
 
@@ -148,16 +148,9 @@ def _list_option(sync_cfg: ConfigParser, section: str, option: str, default: lis
     return [item.strip() for item in sync_cfg.get(section, option).split(",")]
 
 
-def _sync_mode(sync_cfg: ConfigParser, section: str, name: str) -> str:
+def _sync_mode(sync_cfg: ConfigParser, section: str) -> str:
     sync_mode = sync_cfg.get(section, "sync_mode", fallback=DEFAULT_SYNC_MODE).strip()
     if sync_mode not in SYNC_MODES:
-        log.warning(
-            "[target:%s] Invalid sync_mode=%r; must be one of %s — defaulting to %r",
-            name,
-            sync_mode,
-            sorted(SYNC_MODES),
-            DEFAULT_SYNC_MODE,
-        )
-        sync_mode = DEFAULT_SYNC_MODE
+        raise ValueError(f"[{section}] Invalid sync_mode {sync_mode!r}; must be one of {sorted(SYNC_MODES)}")
 
     return sync_mode

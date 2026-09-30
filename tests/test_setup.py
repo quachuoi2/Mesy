@@ -312,3 +312,23 @@ def test_make_symlink_keeps_folder_when_copy_incomplete(tmp_path, monkeypatch):
 
     assert not link.is_symlink()
     assert (link / "notes.md").read_text() == "notes"
+
+
+def test_link_repo_item_copies_when_windows_symlink_fails(tmp_path, monkeypatch):
+    """Windows without symlink permission: a repo-only file is copied instead of crashing setup."""
+    src = tmp_path / "src"
+    src.mkdir()
+    repo_file = tmp_path / "repo" / "notes.md"
+    repo_file.parent.mkdir()
+    repo_file.write_text("# Notes")
+
+    def no_symlinks(*args, **kwargs):
+        raise OSError("symlink not permitted")
+
+    monkeypatch.setattr(setup, "IS_WINDOWS", True)
+    monkeypatch.setattr(setup.os, "symlink", no_symlinks)
+
+    setup._link_repo_item(repo_file, src, "demo", ["*.md"], [])
+
+    assert (src / "notes.md").read_text() == "# Notes"
+    assert not (src / "notes.md").is_symlink()

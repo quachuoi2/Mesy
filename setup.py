@@ -308,17 +308,22 @@ def make_file_symlink(link: Path, target: Path) -> None:
 
     link.parent.mkdir(parents=True, exist_ok=True)
 
+    _link_file(link, target, link.name)
+
+
+def _link_file(link: Path, target: Path, label: str) -> None:
+    """Symlink *link* to *target*; on Windows without symlink permission, copy instead."""
     if IS_WINDOWS:
         try:
             os.symlink(target, link)
-            print_status("ok", f"Symlinked {link.name}")
+            print_status("ok", f"Symlinked {label}")
 
         except OSError:
             shutil.copy2(target, link)
-            print_status("warn", f"Symlink failed for {link.name}, copied instead (edits won't sync back!)")
+            print_status("warn", f"Symlink failed for {label}, copied instead (edits won't sync back!)")
     else:
         os.symlink(target, link)
-        print_status("ok", f"Symlinked {link.name}")
+        print_status("ok", f"Symlinked {label}")
 
 
 def _move_file_into_repo(link: Path, target: Path) -> None:
@@ -479,17 +484,7 @@ def _adopt_file(item: Path, repo_file: Path, name: str) -> None:
         print_status("ok", f"  [{name}] {item.name} identical")
 
     item.unlink()
-    if IS_WINDOWS:
-        try:
-            os.symlink(repo_file, item)
-            print_status("ok", f"  [{name}] Symlinked {item.name}")
-
-        except OSError:
-            shutil.copy2(repo_file, item)
-            print_status("warn", f"  [{name}] Symlink failed for {item.name}, copied instead")
-    else:
-        os.symlink(repo_file, item)
-        print_status("ok", f"  [{name}] Symlinked {item.name}")
+    _link_file(item, repo_file, f"[{name}] {item.name}")
 
 
 def _link_repo_item(repo_file: Path, src: Path, name: str, file_patterns: list[str],
@@ -513,8 +508,7 @@ def _link_repo_item(repo_file: Path, src: Path, name: str, file_patterns: list[s
     elif src_file.exists():
         return
 
-    os.symlink(repo_file, src_file)
-    print_status("ok", f"  [{name}] Symlinked {repo_file.name} (from repo)")
+    _link_file(src_file, repo_file, f"[{name}] {repo_file.name} (from repo)")
 
 
 def setup_repo(repo_base: Path, seen_target_types: set[str]) -> None:

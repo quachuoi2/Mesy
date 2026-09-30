@@ -107,7 +107,7 @@ The Codex target syncs `~/.codex/AGENTS.md` with `codex/AGENTS.md` and the whole
 
 Defaults if omitted: `debounce_seconds = 30`, both intervals `60`, `file_patterns = *.md`, `sync_mode = symlink`. Polling mode (no `watchdog`) ticks at the smallest `debounce_seconds` across repos, floored at 60s.
 
-All three intervals must be finite positive numbers. A missing, zero, negative, non-numeric, `nan`, or `inf` value is a configuration error: the daemon logs it and exits non-zero rather than starting in a broken state.
+All three intervals must be finite positive numbers. A missing, zero, negative, non-numeric, `nan`, or `inf` value, or a `sync_mode` other than `symlink` or `copy`, is a configuration error: the daemon logs it and exits non-zero rather than starting in a broken state.
 
 ## Sync Modes
 
