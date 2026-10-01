@@ -305,8 +305,8 @@ class TestPullRemote:
 
         assert any("Pulled" in r.message for r in caplog.records)
 
-    def test_handles_failure_silently(self, tmp_repo, monkeypatch, caplog):
-        """pull_remote() logs debug on failure, does not raise."""
+    def test_warns_on_failure(self, tmp_repo, monkeypatch, caplog):
+        """pull_remote() logs a warning on failure, does not raise."""
         import logging
 
         monkeypatch.setattr(
@@ -314,10 +314,10 @@ class TestPullRemote:
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "connection refused"),
         )
 
-        with caplog.at_level(logging.DEBUG, logger="mesy"):
+        with caplog.at_level(logging.WARNING, logger="mesy"):
             pull_remote(repo_base=tmp_repo)  # must not raise
 
-        assert any("pull failed" in r.message for r in caplog.records)
+        assert any(r.message == "pull failed: connection refused" for r in caplog.records)
 
     def test_resolves_conflicts_on_failure(self, tmp_repo, monkeypatch):
         """pull_remote() resolves conflicts instead of leaving the rebase stuck."""

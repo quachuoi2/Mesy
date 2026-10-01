@@ -39,6 +39,7 @@ def _setup_logging() -> None:
         encoding="utf-8"
     )
     logging.basicConfig(level=logging.INFO, format=LOG_FMT, handlers=[log_file])
+    log.setLevel(logging.DEBUG)
 
 
 def _load_repo_ctxs() -> list[RepoCtx]:

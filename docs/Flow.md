@@ -85,7 +85,7 @@ Rules per link type are in [FunctionalSpec.md §6](FunctionalSpec.md) (Deletes).
 ## 8. Offline, or push rejected
 
 1. Commit made locally.
-2. Pull fails. Logged at debug only, so invisible in `log.log` (Bugs #8).
+2. Pull fails. Warning `pull failed`.
 3. Push fails. Warning `push failed (offline?)`.
 4. Back online: the next interval pull replays local commits on top of the remote. Conflicts go to scenario 5 or 6.
 
@@ -114,7 +114,7 @@ Handled:
 - Next start after a stop: `first_sync` pulls, scans, commits, and the commit's own pull and push go through. Symlink-mode edits made while the daemon was off are already in the repo folder, so they are included.
 
 Not handled:
-- After waking, the network is often not up yet. That pull fails silently, and the next try is a full 600 s later, because `run_intervals` (`src/cycle.py:67-70`) records the pull time before the pull runs, even when it fails.
+- After waking, the network is often not up yet. That pull fails, and the next try is a full 600 s later, because `run_intervals` (`src/cycle.py:67-70`) records the pull time before the pull runs, even when it fails.
 - Shutdown, `systemctl stop` or restart: SIGTERM ends Python at once (only Ctrl+C is caught). No final commit or push, so edits within the last 600 s stay on this machine until it starts again.
 
 ## 11. A target's scan fails
@@ -124,7 +124,7 @@ No commits for the whole data repo. The README says "Pulls continue, so the repo
 ## 12. Config files edited by hand
 
 - `git add` stages only the target folders (`claude/global/`, `claude/projects/`, `openclaw/main/`). `sync.ini` and `claude/projects.ini` are tracked but outside them, so Mesy never commits them.
-- Edited and not committed by hand: every `git pull --rebase` is refused (tested). This machine stops getting remote changes, and its pushes are rejected once GitHub moves ahead. Both failures are logged as debug or "offline?".
+- Edited and not committed by hand: every `git pull --rebase` is refused (tested). This machine stops getting remote changes, and its pushes are rejected once GitHub moves ahead. The pull failure is a warning; the push failure says "offline?".
 - Today the person commits them by hand (e.g. `545d215` "Added new project paths"), which avoids this.
 
 ## 13. Config changes arrive from another machine

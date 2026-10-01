@@ -9,7 +9,7 @@ As of 2026-10-01 (branch `main`). Product context: [ProductSpec.md](ProductSpec.
 | `setup.py` | Mesy root | One-time interactive setup per device |
 | `sync.py` | Mesy root | Starts the daemon |
 | `repos.ini` | Mesy root | Lists data repos. Required |
-| `log.log` | Mesy root | Daemon log, 1 MB, one backup |
+| `log.log` | Mesy root | Daemon log, 1 MB, one backup. Every git command is logged at DEBUG with its exit code and output |
 | `sync.ini` | Data repo root | Timing and targets for that repo |
 | `claude/projects.ini` | Data repo | Claude Code project name mapping |
 | `.mesy_sync_hashes.json` | Data repo root | Copy-mode hashes for this device. Never committed |
@@ -148,7 +148,7 @@ Git rebase conflicts keep git's own markers (`HEAD` is the other machine's side)
 |---------|----------|
 | Any target's scan fails | No commits for the whole data repo; pulls continue. Logged once at ERROR until the message changes; INFO on recovery |
 | Repo has both `<raw>/` and `<canonical>/` for a mapped project | Scan fails every cycle until the raw folder is merged by hand |
-| Pull fails (offline) | Retried next interval |
+| Pull fails | Warning; retried next interval |
 | Push fails | Warning; commit stays local until the next start or the next change |
 | Git call times out | Warning; retried next cycle |
 | Misconfiguration at start | Exit 1; systemd restarts every 10 s until fixed |

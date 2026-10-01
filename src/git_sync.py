@@ -15,10 +15,13 @@ log = logging.getLogger("mesy")
 
 def git(*args: str, repo_base: Path, check: bool = False) -> subprocess.CompletedProcess:
     cmd = ["git", "-C", str(repo_base)] + list(args)
-    log.debug("git %s", " ".join(args))
     # rebase --continue opens an editor otherwise; the daemon has no terminal, so it hangs until timeout.
     env = {**os.environ, "GIT_EDITOR": "true"}
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=check, env=env)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=check, env=env)
+
+    log.debug("[%s] git %s -> exit %d %s", repo_base.name, " ".join(args), result.returncode,
+              (result.stdout + result.stderr).strip())
+    return result
 
 
 def has_local_changes(repo_base: Path) -> bool:
@@ -127,5 +130,5 @@ def pull_remote(repo_base: Path) -> None:
             log.info("Pulled remote changes")
         return
 
-    log.debug("pull failed (offline?), attempting conflict resolution: %s", result.stderr)
+    log.warning("pull failed: %s", result.stderr)
     resolve_conflicts(repo_base)
