@@ -1,4 +1,4 @@
-"""Unit tests for src/targets/_migration.py — ensure_real_file and ensure_real_dir."""
+"""Unit tests for CopyMode symlink-to-real helpers — ensure_real_file and ensure_real_dir."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.targets._migration import ensure_real_dir, ensure_real_file
+from src.sync_modes.copy import ensure_real_dir, ensure_real_file
 
 
 class TestEnsureRealFile:
@@ -205,7 +205,7 @@ class TestEnsureRealDir:
                 raise OSError("Simulated crash mid-copy")
             original_copy2(src, dst, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr("src.targets._migration.shutil.copy2", failing_copy2)
+        monkeypatch.setattr("src.sync_modes.copy.shutil.copy2", failing_copy2)
 
         with pytest.raises(OSError, match="Simulated crash"):
             ensure_real_dir(link, repo_fallback=None)

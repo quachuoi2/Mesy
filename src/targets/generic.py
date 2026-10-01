@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import fnmatch
+from dataclasses import dataclass
 from pathlib import Path
 
-from src.targets._migration import FilePair
 from src.targets.base import SyncTarget
+
+
+@dataclass
+class FilePair:
+    """A single file matched between source and repo (GenericTarget)."""
+
+    src_file: Path
+    repo_file: Path
 
 
 class GenericTarget(SyncTarget):

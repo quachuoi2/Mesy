@@ -27,13 +27,11 @@ from pathlib import Path
 
 from src.timestamp import now_iso
 
-PENDING_RELATIVE = Path("claude") / "projects" / ".pending"
-
 _PATHS_LINE = re.compile(r"^\s*paths\s*=\s*(\S+)\s*$", re.MULTILINE)
 
 
 def pending_path(repo_base: Path) -> Path:
-    return repo_base / PENDING_RELATIVE
+    return repo_base / "claude" / "projects" / ".pending"
 
 
 def _parse_raw_names(text: str) -> list[str]:

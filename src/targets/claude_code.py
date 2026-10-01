@@ -3,18 +3,27 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from src.config import DEFAULT_FILE_PATTERNS, load_project_mappings
 from src.pending import add_pending, pending_path, prune_pending
 from src.sync_modes.base import SyncMode
-from src.targets._migration import ProjectPair
 from src.targets.base import SyncTarget
 
 log = logging.getLogger("mesy")
 
 CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
+
+
+@dataclass
+class ProjectPair:
+    """A mapped Claude Code project with its local and repo paths."""
+
+    local_memory: Path   # ~/.claude/projects/<raw>/memory
+    local_claude_md: Path  # ~/.claude/projects/<raw>/CLAUDE.md
+    canonical_dir: Path       # <data_repo>/claude/projects/<canonical>
 
 
 class ClaudeCodeTarget(SyncTarget):
