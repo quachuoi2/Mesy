@@ -146,48 +146,6 @@ class TestScanProjects:
         assert memory_dir.resolve() == canonical_dir.resolve()
 
 
-class TestSyncClaudeMd:
-    def test_copies_and_symlinks_project_claude_md(self, claude_env, monkeypatch):
-        """mode.sync_file() copies project CLAUDE.md to repo and symlinks it (symlink mode)."""
-        raw_name = "-home-user-Project"
-        project_dir = claude_env["projects_dir"] / raw_name
-        project_dir.mkdir(parents=True)
-        local_claude = project_dir / "CLAUDE.md"
-        local_claude.write_text("# Project Config")
-
-        canonical_dir = claude_env["repo"] / "claude" / "projects" / "Project"
-        canonical_dir.mkdir(parents=True)
-
-        target = make_target(claude_env)
-        repo_claude = canonical_dir / "CLAUDE.md"
-        target.mode.sync_file(local_claude, repo_claude, label=f"CLAUDE.md for {raw_name}")
-
-        assert repo_claude.exists()
-        assert local_claude.is_symlink()
-        assert local_claude.resolve() == repo_claude.resolve()
-
-    def test_skips_if_already_symlinked(self, claude_env):
-        """mode.sync_file() does nothing if CLAUDE.md is already a symlink (symlink mode)."""
-        raw_name = "-home-user-Project"
-        project_dir = claude_env["projects_dir"] / raw_name
-        project_dir.mkdir(parents=True)
-
-        canonical_dir = claude_env["repo"] / "claude" / "projects" / "Project"
-        canonical_dir.mkdir(parents=True)
-        repo_claude = canonical_dir / "CLAUDE.md"
-        repo_claude.write_text("# In Repo")
-
-        local_claude = project_dir / "CLAUDE.md"
-        local_claude.symlink_to(repo_claude)
-
-        target = make_target(claude_env)
-        target.mode.sync_file(local_claude, repo_claude, label=f"CLAUDE.md for {raw_name}")
-
-        # Symlink should still resolve to the same place
-        assert local_claude.is_symlink()
-        assert local_claude.resolve() == repo_claude.resolve()
-
-
 class TestSafetyVerification:
     def test_rmtree_skipped_on_failed_migration(self, claude_env, monkeypatch, caplog):
         """rmtree is NOT called when all_copied returns False."""
@@ -605,6 +563,29 @@ class TestSyncFile:
 
         assert len(merge_calls) == 1
         assert merge_calls[0] == (local, repo)
+
+    def test_copy_mode_repo_edit_after_identical_sync_reaches_local(
+        self, claude_env, monkeypatch
+    ) -> None:
+        """copy mode: identical files get a stored version, so a later repo-only edit is copied, not merged."""
+        merge_calls: list[tuple[Path, Path]] = []
+        monkeypatch.setattr(
+            "src.sync_modes.copy.merge_conflicting_file", lambda local, repo: merge_calls.append((local, repo))
+        )
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
+        target = make_copy_target(claude_env)
+
+        local = claude_env["claude_dir"] / "CLAUDE.md"
+        local.write_text("# Same")
+        repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
+        repo.write_text("# Same")
+        target.mode.sync_file(local, repo, label="test file")
+
+        repo.write_text("# Edited on another computer")
+        target.mode.sync_file(local, repo, label="test file")
+
+        assert local.read_text() == "# Edited on another computer"
+        assert merge_calls == []
 
 
 class TestSyncDir:

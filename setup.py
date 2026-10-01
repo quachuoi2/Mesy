@@ -426,10 +426,6 @@ def _prelink_mapped(repo_base: Path, claude_projects_dir: Path, mapping: dict[st
 
 def _link_to_canonical(project_dir: Path, canonical_dir: Path) -> None:
     make_symlink(project_dir / "memory", canonical_dir)
-    make_file_symlink(
-        project_dir / "CLAUDE.md",
-        canonical_dir / "CLAUDE.md",
-    )
 
 
 def setup_generic_target(repo_base: Path, name: str, src: Path, repo_subdir: str,

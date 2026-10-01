@@ -7,7 +7,6 @@ Checked against the code on main, 2026-09-30.
 | 2 | Conflict merge breaks nested frontmatter and drops repo values | `src/conflict.py` `split_frontmatter`, `merge_conflicting_file` | Yes, on any memory-file conflict |
 | 3 | Rebase conflict labels are swapped | `src/git_sync.py:126-128` | Yes, on any rebase conflict |
 | 4 | A repeat rebase conflict adds a second `conflict: true` line | `src/conflict.py` `flag_conflict` | Only when an already-flagged file conflicts again |
-| 7 | Claude Code copy mode syncs two local files to one repo file | `src/targets/claude_code.py` | No (neither file pair exists today) |
 | 8 | Failed pulls are logged at debug only | `src/git_sync.py` `pull_remote` | Yes, silently |
 
 ## 2. Conflict merge breaks frontmatter
@@ -30,11 +29,6 @@ Checked against the code on main, 2026-09-30.
 - **What happens:** `flag_conflict` always inserts `conflict: true`. A file that already has it (an earlier conflict not yet resolved) gets a second `conflict:` line.
 - **Effect:** duplicate key in the frontmatter. Most YAML readers keep the last one, so the flag still reads as true.
 - **Fix:** skip the line when the key already exists.
-
-## 7. Claude Code copy mode: two local files, one repo file
-
-- **What happens:** `~/.claude/projects/<x>/CLAUDE.md` and `~/.claude/projects/<x>/memory/CLAUDE.md` both map to `<canonical>/CLAUDE.md` in the repo. If both exist, they overwrite each other on every scan.
-- **Fix:** remove the project `CLAUDE.md` sync. Claude Code never reads that file.
 
 ## 8. Failed pulls are hidden
 

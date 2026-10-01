@@ -78,7 +78,6 @@ Every git call times out after 30 s.
 |--------|-------|-----------|
 | Claude Code | `~/.claude/CLAUDE.md` | `claude/global/CLAUDE.md` |
 | Claude Code | `~/.claude/rules/` | `claude/global/rules/` |
-| Claude Code | `~/.claude/projects/<raw>/CLAUDE.md` | `claude/projects/<canonical>/CLAUDE.md` |
 | Claude Code | `~/.claude/projects/<raw>/memory/` | `claude/projects/<canonical>/` |
 | Codex | `<source>/AGENTS.md` | `<repo_subdir>/AGENTS.md` |
 | Codex | `<source>/memories/` | `<repo_subdir>/memories/` |
@@ -86,7 +85,7 @@ Every git call times out after 30 s.
 
 A generic target whose source is its own repo folder (DMNotes) is not synced in either mode, only committed and pushed.
 
-Claude Code scan order: load mapping → prune `.pending` → sync each mapped project that has `memory/` or `CLAUDE.md` → record unmapped ones in `.pending`.
+Claude Code scan order: load mapping → prune `.pending` → sync each mapped project that has `memory/` → record unmapped ones in `.pending`.
 
 ## 6. Sync modes
 

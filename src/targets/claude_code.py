@@ -22,7 +22,6 @@ class ProjectPair:
     """A mapped Claude Code project with its local and repo paths."""
 
     local_memory: Path   # ~/.claude/projects/<raw>/memory
-    local_claude_md: Path  # ~/.claude/projects/<raw>/CLAUDE.md
     canonical_dir: Path       # <data_repo>/claude/projects/<canonical>
 
 
@@ -93,19 +92,13 @@ class ClaudeCodeTarget(SyncTarget):
         """Return a ProjectPair if mapped; record unmapped projects in ``.pending``."""
         raw_name = project_dir.name
         memory_dir = project_dir / "memory"
-        local_claude_md = project_dir / "CLAUDE.md"
 
-        # Project must have at least a memory dir (real, symlink, or absent is OK —
-        # we still handle it) or a CLAUDE.md to be worth adopting.
-        memory_exists = memory_dir.exists() or memory_dir.is_symlink()
-        claude_md_exists = local_claude_md.exists() or local_claude_md.is_symlink()
-        if not memory_exists and not claude_md_exists:
+        if not memory_dir.exists() and not memory_dir.is_symlink():
             return None
 
         if raw_name in mapping:
             return ProjectPair(
                 local_memory=memory_dir,
-                local_claude_md=local_claude_md,
                 canonical_dir=self.repo_base / "claude" / "projects" / mapping[raw_name],
             )
 
@@ -140,15 +133,10 @@ class ClaudeCodeTarget(SyncTarget):
         self.mode.sync_dir(self.claude_dir / "rules", global_dir / "rules", label="global rules")
 
     def _sync_project(self, pair: ProjectPair) -> None:
-        """Sync a single mapped project's CLAUDE.md and memory/ dir."""
+        """Sync a single mapped project's memory/ dir."""
         pair.canonical_dir.mkdir(parents=True, exist_ok=True)
 
-        self.mode.sync_file(
-            pair.local_claude_md,
-            pair.canonical_dir / "CLAUDE.md",
-            label=f"CLAUDE.md for {pair.local_claude_md.parent.name}",
-        )
-        self.mode.sync_dir(pair.local_memory, pair.canonical_dir, label=pair.local_claude_md.parent.name)
+        self.mode.sync_dir(pair.local_memory, pair.canonical_dir, label=pair.local_memory.parent.name)
 
 
 def load_project_mappings(repo_base: Path) -> dict[str, str]:
