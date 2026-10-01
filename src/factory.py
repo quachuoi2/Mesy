@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from src.config import (
-    DEFAULT_FILE_PATTERNS,
     DEFAULT_SYNC_MODE,
     SETTING_DEFAULTS,
     get_mesy_settings,
@@ -72,41 +71,10 @@ def _check_timings(repo_name: str, settings: dict) -> None:
             raise ValueError(f"[{repo_name}] {key} must be a finite positive number, got {settings[key]!r}")
 
 
-def _codex_target(target_def: dict, target_dir: Path, repo_base: Path, mode: SyncMode) -> SyncTarget:
-    return CodexTarget(
-        name=target_def["name"],
-        src=target_def["source"],
-        target_dir=target_dir,
-        repo_base=repo_base,
-        mode=mode,
-    )
-
-
-def _claude_code_target(target_def: dict, target_dir: Path, repo_base: Path, mode: SyncMode) -> SyncTarget:
-    return ClaudeCodeTarget(
-        src=target_def["source"],
-        target_dir=target_dir,
-        repo_base=repo_base,
-        mode=mode,
-    )
-
-
-def _generic_target(target_def: dict, target_dir: Path, repo_base: Path, mode: SyncMode) -> SyncTarget:
-    return GenericTarget(
-        name=target_def["name"],
-        src=target_def["source"],
-        target_dir=target_dir,
-        repo_base=repo_base,
-        file_patterns=target_def.get("file_patterns", list(DEFAULT_FILE_PATTERNS)),
-        exclude=target_def.get("exclude", []),
-        mode=mode,
-    )
-
-
-_BUILDERS = {
-    "codex": _codex_target,
-    "claude-code": _claude_code_target,
-    "generic": _generic_target,
+_TARGET_CLASSES = {
+    "codex": CodexTarget,
+    "claude-code": ClaudeCodeTarget,
+    "generic": GenericTarget,
 }
 
 
@@ -129,10 +97,18 @@ def build_targets(target_defs: list[dict], repo_base: Path) -> list[SyncTarget]:
 
     targets = []
     for target_def in target_defs:
-        target_dir = repo_base / target_def["repo_subdir"]
-        mode = modes[target_def.get("sync_mode", DEFAULT_SYNC_MODE)]
-        builder = _BUILDERS[target_def["type"]]
-        targets.append(builder(target_def, target_dir, repo_base, mode))
+        target_args = {
+            "name": target_def["name"],
+            "src": target_def["source"],
+            "target_dir": repo_base / target_def["repo_subdir"],
+            "mode": modes[target_def.get("sync_mode", DEFAULT_SYNC_MODE)],
+            "repo_base": repo_base,
+        }
+        if target_def["type"] == "generic":
+            target_args["file_patterns"] = target_def.get("file_patterns")
+            target_args["exclude"] = target_def.get("exclude")
+
+        targets.append(_TARGET_CLASSES[target_def["type"]](**target_args))
 
     return targets
 

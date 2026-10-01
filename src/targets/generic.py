@@ -6,6 +6,8 @@ import fnmatch
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.config import DEFAULT_FILE_PATTERNS
+from src.sync_modes.base import SyncMode
 from src.targets.base import SyncTarget
 
 
@@ -18,6 +20,21 @@ class FilePair:
 
 
 class GenericTarget(SyncTarget):
+
+    def __init__(
+        self,
+        name: str,
+        src: Path,
+        target_dir: Path,
+        mode: SyncMode,
+        repo_base: Path | None = None,
+        file_patterns: list[str] | None = None,
+        exclude: list[str] | None = None,
+    ):
+        super().__init__(name=name, src=src, target_dir=target_dir, mode=mode, repo_base=repo_base)
+
+        self.file_patterns = file_patterns or list(DEFAULT_FILE_PATTERNS)
+        self.exclude = exclude or []
 
     def setup(self) -> None:
         """Initial migration — same pipeline as scan()."""

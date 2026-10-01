@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from src.config import DEFAULT_FILE_PATTERNS
 from src.sync_modes.base import SyncMode
 
 
@@ -17,8 +16,6 @@ class SyncTarget(ABC):
     target_dir: Path        # subdirectory in the data repo (e.g. AlfredMemory/openclaw/main)
     mode: SyncMode
     repo_base: Path        # root of the data repo this target belongs to
-    file_patterns: list[str]
-    exclude: list[str]
 
     def __init__(
         self,
@@ -27,16 +24,12 @@ class SyncTarget(ABC):
         target_dir: Path,
         mode: SyncMode,
         repo_base: Path | None = None,
-        file_patterns: list[str] | None = None,
-        exclude: list[str] | None = None,
     ):
         self.name = name
         self.src = src
         self.target_dir = target_dir
         self.mode = mode
         self.repo_base = repo_base if repo_base is not None else target_dir.parent
-        self.file_patterns = file_patterns or list(DEFAULT_FILE_PATTERNS)
-        self.exclude = exclude or []
 
     @abstractmethod
     def setup(self) -> None:

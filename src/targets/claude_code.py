@@ -7,7 +7,6 @@ from configparser import ConfigParser
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.config import DEFAULT_FILE_PATTERNS
 from src.pending import add_pending, pending_path, prune_pending
 from src.sync_modes.base import SyncMode
 from src.targets.base import SyncTarget
@@ -31,20 +30,20 @@ class ClaudeCodeTarget(SyncTarget):
 
     def __init__(
         self,
+        name: str,
         src: Path,
         target_dir: Path,
-        repo_base: Path,
         mode: SyncMode,
+        repo_base: Path,
         claude_dir: Path | None = None,
         projects_dir: Path | None = None,
     ):
         super().__init__(
-            name="claude-code",
+            name=name,
             src=src,
             target_dir=target_dir,
             mode=mode,
             repo_base=repo_base,
-            file_patterns=list(DEFAULT_FILE_PATTERNS),
         )
 
         self.claude_dir = claude_dir or CLAUDE_DIR

@@ -14,6 +14,7 @@ from src.targets.claude_code import ClaudeCodeTarget, load_project_mappings
 def make_target(claude_env) -> ClaudeCodeTarget:
     """Helper to build a ClaudeCodeTarget with injected paths."""
     return ClaudeCodeTarget(
+        name="claude-code",
         src=claude_env["projects_dir"],
         target_dir=claude_env["repo"] / "claude" / "projects",
         repo_base=claude_env["repo"],
@@ -216,6 +217,7 @@ class TestSafetyVerification:
 def make_copy_target(claude_env) -> ClaudeCodeTarget:
     """Helper to build a ClaudeCodeTarget in copy mode."""
     return ClaudeCodeTarget(
+        name="claude-code",
         src=claude_env["projects_dir"],
         target_dir=claude_env["repo"] / "claude" / "projects",
         repo_base=claude_env["repo"],
