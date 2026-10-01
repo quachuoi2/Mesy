@@ -254,10 +254,9 @@ def test_setup_repo_skips_duplicate_target_types(tmp_path, monkeypatch, capsys):
     repo_base.mkdir()
     (repo_base / "sync.ini").write_text(
         "[mesy]\n"
-        "[target:claude_code]\n"
+        "[target:claude-code]\n"
         "source = ~/.claude\n"
         "repo_subdir = claude\n"
-        "mapping_cfg = claude/projects.ini\n"
     )
 
     calls = []

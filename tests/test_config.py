@@ -35,13 +35,12 @@ class TestLoadSyncCfg:
         assert settings["scan_interval_seconds"] == "60"
 
     def test_parse_claude_code_target(self, tmp_repo):
-        """[target:*] with mapping_cfg produces type=claude-code."""
+        """[target:claude-code] produces type=claude-code."""
         sync_cfg_path = tmp_repo / "sync.ini"
         sync_cfg_path.write_text(
             "[target:claude-code]\n"
             "source = /tmp/projects\n"
             "repo_subdir = claude/projects\n"
-            "mapping_cfg = claude/projects.ini\n"
         )
 
         sync_cfg = load_sync_cfg(tmp_repo)
@@ -49,10 +48,22 @@ class TestLoadSyncCfg:
         assert len(targets) == 1
         assert targets[0]["type"] == "claude-code"
         assert targets[0]["name"] == "claude-code"
-        assert targets[0]["mapping_cfg"] == "claude/projects.ini"
+
+    def test_parse_codex_target(self, tmp_repo):
+        """[target:codex] produces type=codex."""
+        sync_cfg_path = tmp_repo / "sync.ini"
+        sync_cfg_path.write_text(
+            "[target:codex]\n"
+            "repo_subdir = codex\n"
+        )
+
+        sync_cfg = load_sync_cfg(tmp_repo)
+        targets = load_targets(sync_cfg)
+        assert len(targets) == 1
+        assert targets[0]["type"] == "codex"
 
     def test_parse_generic_target(self, tmp_repo):
-        """[target:*] without mapping_cfg produces type=generic."""
+        """[target:*] with any other name produces type=generic."""
         sync_cfg_path = tmp_repo / "sync.ini"
         sync_cfg_path.write_text(
             "[target:openclaw]\n"

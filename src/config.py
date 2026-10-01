@@ -78,7 +78,7 @@ def load_targets(sync_cfg: ConfigParser) -> list[dict]:
     """Parse [target:*] sections from config into target definitions.
 
     Returns a list of dicts with keys: name, type, source, repo_subdir,
-    and optional: mapping_cfg, file_patterns, exclude, sync_mode.
+    file_patterns, exclude, sync_mode.
     """
     return [_parse_target(sync_cfg, section) for section in sync_cfg.sections() if section.startswith("target:")]
 
@@ -86,24 +86,13 @@ def load_targets(sync_cfg: ConfigParser) -> list[dict]:
 def _parse_target(sync_cfg: ConfigParser, section: str) -> dict:
     name = section.split(":", 1)[1]
     target_def = {"name": name}
-    target_def["type"] = _target_type(sync_cfg, section)
+    target_def["type"] = name if name in {"claude-code", "codex"} else "generic"
     target_def["source"] = _target_src(sync_cfg, section, target_def["type"])
     target_def["repo_subdir"] = sync_cfg.get(section, "repo_subdir")
-    if sync_cfg.has_option(section, "mapping_cfg"):
-        target_def["mapping_cfg"] = sync_cfg.get(section, "mapping_cfg")
     target_def["file_patterns"] = _list_option(sync_cfg, section, "file_patterns", list(DEFAULT_FILE_PATTERNS))
     target_def["exclude"] = _list_option(sync_cfg, section, "exclude", [])
     target_def["sync_mode"] = _sync_mode(sync_cfg, section)
     return target_def
-
-
-def _target_type(sync_cfg: ConfigParser, section: str) -> str:
-    inferred_type = "claude-code" if sync_cfg.has_option(section, "mapping_cfg") else "generic"
-    target_type = sync_cfg.get(section, "type", fallback=inferred_type).strip()
-    if target_type not in {"claude-code", "generic", "codex"}:
-        raise ValueError(f"[{section}] Unknown target type: {target_type}")
-
-    return target_type
 
 
 def _target_src(sync_cfg: ConfigParser, section: str, target_type: str) -> Path:

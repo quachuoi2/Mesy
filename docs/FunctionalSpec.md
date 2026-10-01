@@ -31,23 +31,22 @@ path = ~/Workspace/AlfredMemory
 | `pull_interval_seconds` | 60 | Time between pulls |
 | `scan_interval_seconds` | 60 | Time between scans |
 
-`sync.ini` `[target:<name>]`:
+`sync.ini` `[target:<name>]`. The name sets the type: `claude-code`, `codex`, any other name → generic.
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `type` | `claude-code` if `mapping_cfg` is set, else `generic` | `claude-code`, `codex`, `generic` |
 | `source` | Required. Codex: `$CODEX_HOME`, else `~/.codex` | The tool's folder |
 | `repo_subdir` | Required | Folder inside the data repo |
 | `file_patterns` | `*.md` | Generic only |
 | `exclude` | none | Generic only. Matches names, not paths |
 | `sync_mode` | `symlink` | `symlink` or `copy`. Invalid value → exit 1 |
 
-The Claude Code target ignores `source`, `repo_subdir` and the `mapping_cfg` value. It always uses `~/.claude`, `claude/` in the data repo and `claude/projects.ini`.
+The Claude Code target ignores `source` and `repo_subdir`. It always uses `~/.claude`, `claude/` in the data repo and `claude/projects.ini`.
 
 ## 3. Start-up
 
 1. Read `repos.ini`. Missing, empty, or a bad `[repo:*]` section → exit 1.
-2. Build each repo's targets. Bad timing value, unknown type, empty `source` or invalid `sync_mode` → exit 1.
+2. Build each repo's targets. Bad timing value, empty `source` or invalid `sync_mode` → exit 1.
 3. No targets in any repo → exit 1.
 4. For each repo: pull, scan, then commit and push if the scan succeeded.
 5. Enter the watch loop (`watchdog` installed) or the polling loop.

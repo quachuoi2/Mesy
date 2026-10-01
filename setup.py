@@ -45,15 +45,13 @@ SYNC_CFG_TEMPLATE = f"""\
 {_SETTING_LINES}
 
 # Example Claude Code target (uncomment and edit):
-# [target:claude_code]
+# [target:claude-code]
 # source = ~/.claude
 # repo_subdir = claude
-# mapping_cfg = claude/projects.ini
 # sync_mode = symlink
 
 # Example Codex target (uncomment to enable):
 # [target:codex]
-# type = codex
 # repo_subdir = codex
 # sync_mode = symlink
 """

@@ -89,7 +89,6 @@ scan_interval_seconds = 600  # How often to scan for new projects
 [target:claude-code]
 source = ~/.claude/projects
 repo_subdir = claude/projects
-mapping_cfg = claude/projects.ini   # Presence of this key = claude-code target
 
 [target:openclaw]
 source = ~/.openclaw/workspace
@@ -99,11 +98,12 @@ exclude = TOOLS.md, HEARTBEAT.md, .openclaw/
 sync_mode = copy
 
 [target:codex]
-type = codex                          # source defaults to $CODEX_HOME, else ~/.codex
 repo_subdir = codex
 ```
 
-The Codex target syncs `~/.codex/AGENTS.md` with `codex/AGENTS.md` and the whole `~/.codex/memories/` folder with `codex/memories/`. Project `AGENTS.md` files stay in their own repositories.
+The section name sets the target type: `[target:claude-code]`, `[target:codex]`, or any other name for a generic target.
+
+The Codex target syncs `~/.codex/AGENTS.md` with `codex/AGENTS.md` and the whole `~/.codex/memories/` folder with `codex/memories/`. Project `AGENTS.md` files stay in their own repositories. Its `source` defaults to `$CODEX_HOME`, else `~/.codex`.
 
 Defaults if omitted: `debounce_seconds = 30`, both intervals `60`, `file_patterns = *.md`, `sync_mode = symlink`. Polling mode (no `watchdog`) ticks at the smallest `debounce_seconds` across repos, floored at 60s.
 
