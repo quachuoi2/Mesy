@@ -1,6 +1,6 @@
 # Mesy — Functional Spec
 
-As of 2026-09-26 (branch `refactor`). Product context: [ProductSpec.md](ProductSpec.md).
+As of 2026-10-01 (branch `main`). Product context: [ProductSpec.md](ProductSpec.md).
 
 ## 1. Files
 
@@ -16,7 +16,7 @@ As of 2026-09-26 (branch `refactor`). Product context: [ProductSpec.md](ProductS
 
 ## 2. Configuration
 
-`repos.ini` — sections without `path`, or whose path is not a folder, are skipped with a warning.
+`repos.ini` — a section without `path`, or whose path is not a folder, is a configuration error (exit 1).
 
 ```ini
 [repo:alfred-memory]
@@ -40,14 +40,14 @@ path = ~/Workspace/AlfredMemory
 | `repo_subdir` | Required | Folder inside the data repo |
 | `file_patterns` | `*.md` | Generic only |
 | `exclude` | none | Generic only. Matches names, not paths |
-| `sync_mode` | `symlink` | `symlink` or `copy`. Invalid value → warning, `symlink` |
+| `sync_mode` | `symlink` | `symlink` or `copy`. Invalid value → exit 1 |
 
 The Claude Code target ignores `source`, `repo_subdir` and the `mapping_cfg` value. It always uses `~/.claude`, `claude/` in the data repo and `claude/projects.ini`.
 
 ## 3. Start-up
 
-1. Read `repos.ini`. Missing or empty → exit 1.
-2. Build each repo's targets. Bad timing value, unknown type or empty `source` → exit 1.
+1. Read `repos.ini`. Missing, empty, or a bad `[repo:*]` section → exit 1.
+2. Build each repo's targets. Bad timing value, unknown type, empty `source` or invalid `sync_mode` → exit 1.
 3. No targets in any repo → exit 1.
 4. For each repo: pull, scan, then commit and push if the scan succeeded.
 5. Enter the watch loop (`watchdog` installed) or the polling loop.
@@ -67,7 +67,7 @@ Commit and push:
 
 1. Stop if the repo has no changes.
 2. `git add` the targets' folders only.
-3. Commit `sync from <host> at <UTC time>`, with a list of added, updated and deleted files.
+3. Commit `sync from <host> at <time>` (ISO 8601, UTC+7), with a list of added, updated and deleted files.
 4. `git pull --rebase origin <branch>`. On failure, run conflict handling (section 7).
 5. `git push origin <branch>`. On failure, the commit stays local and goes out with the next push.
 
@@ -85,6 +85,8 @@ Every git call times out after 30 s.
 | Codex | `<source>/memories/` | `<repo_subdir>/memories/` |
 | Generic | `<source>/**` matching `file_patterns` | `<repo_subdir>/**` |
 
+A generic target whose source is its own repo folder (DMNotes) is not synced in either mode, only committed and pushed.
+
 Claude Code scan order: load mapping → rename raw-named repo folders to canonical → prune `.pending` → sync each mapped project that has `memory/` or `CLAUDE.md` → record unmapped ones in `.pending`.
 
 ## 6. Sync modes
@@ -94,9 +96,9 @@ Symlink:
 - Real local file → copied into the repo (merged if the repo copy differs), then replaced by a link to it.
 - Real local folder → merged into the repo, checked that every file arrived, then replaced by a folder link. Check fails → folder left alone, error logged.
 - File only in the repo → link created locally.
-- Generic target with a broken or wrong link → link re-pointed at the repo file.
+- Broken or wrong link → re-pointed at the repo file or folder, if that exists.
 
-Copy (generic targets, using per-device hashes):
+Copy (all targets, using per-device hashes):
 
 | Tool side | Repo side | Result |
 |-----------|-----------|--------|
@@ -105,9 +107,10 @@ Copy (generic targets, using per-device hashes):
 | changed | changed | Conflict merge |
 | no stored hash | differs | Tool side wins |
 
-- Claude Code and Codex in copy mode keep no hashes: any difference is a conflict merge.
 - A file on only one side is copied to the other.
-- Changing `sync_mode` on a generic target clears its hashes. Links left from symlink mode become real files.
+- Identical files with no stored hash get one, so the next one-sided edit is copied, not overwritten.
+- Folders (Claude Code `memory/` and `rules/`, Codex `memories/`) go through this table file by file, subfolders and every file type included.
+- Links left from symlink mode become real files.
 
 Deletes:
 
@@ -121,8 +124,8 @@ Both versions are kept in one file, written to both sides:
 
 ```markdown
 ---
-<frontmatter from both sides>
 conflict: true
+<frontmatter from both sides>
 ---
 
 <!-- CONFLICT (<time>): local (<host>) version -->
@@ -131,7 +134,7 @@ conflict: true
 ...
 ```
 
-Git rebase conflicts get the same markers in place of `<<<<<<<`, `=======`, `>>>>>>>`, then the rebase continues. `conflict: true` is added only if the file already has frontmatter. A person resolves the file by hand.
+Git rebase conflicts get the same markers in place of `<<<<<<<`, `=======`, `>>>>>>>`, then the rebase continues. `conflict: true` is added as the first frontmatter line; a file with no frontmatter gets a new block. A person resolves the file by hand.
 
 ## 8. Unmapped Claude Code projects
 

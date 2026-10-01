@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from src.config import DEFAULT_FILE_PATTERNS, DEFAULT_SYNC_MODE, load_project_mappings
+from src.config import DEFAULT_FILE_PATTERNS, load_project_mappings
 from src.pending import add_pending, pending_path, prune_pending
-from src.targets._migration import ProjectPair, ensure_real_dir, ensure_real_file
+from src.sync_modes.base import SyncMode
+from src.targets._migration import ProjectPair
 from src.targets.base import SyncTarget
 
 log = logging.getLogger("mesy")
@@ -23,17 +24,17 @@ class ClaudeCodeTarget(SyncTarget):
         src: Path,
         target_dir: Path,
         repo_base: Path,
+        mode: SyncMode,
         claude_dir: Path | None = None,
         projects_dir: Path | None = None,
-        sync_mode: str = DEFAULT_SYNC_MODE,
     ):
         super().__init__(
             name="claude-code",
             src=src,
             target_dir=target_dir,
+            mode=mode,
             repo_base=repo_base,
             file_patterns=list(DEFAULT_FILE_PATTERNS),
-            sync_mode=sync_mode,
         )
 
         self.claude_dir = claude_dir or CLAUDE_DIR
@@ -82,8 +83,6 @@ class ClaudeCodeTarget(SyncTarget):
     def _walk_and_adopt(self, mapping: dict[str, str]) -> list[ProjectPair]:
         """Walk ~/.claude/projects/, classify each, return mapped-only pairs.
 
-        For mapped projects: use ensure_real_* to fix cross-mode shape drift
-        (symlink leftover from a prior sync_mode change) before yielding.
         For unmapped projects: append the raw name to the shared repo
         ``.pending`` file and do NOT yield a pair — Phase 3 never sees them.
         """
@@ -115,27 +114,14 @@ class ClaudeCodeTarget(SyncTarget):
             return None
 
         if raw_name in mapping:
-            return self._mapped_pair(memory_dir, local_claude_md, mapping[raw_name])
+            return ProjectPair(
+                local_memory=memory_dir,
+                local_claude_md=local_claude_md,
+                canonical_dir=self.repo_base / "claude" / "projects" / mapping[raw_name],
+            )
 
         self._flag_unmapped(project_dir)
         return None
-
-    def _mapped_pair(self, memory_dir: Path, local_claude_md: Path, canonical: str) -> ProjectPair:
-        canonical_dir = self.repo_base / "claude" / "projects" / canonical
-
-        if self.sync_mode == "copy":
-            # Copy mode needs real files; undo links left by an earlier symlink-mode run.
-            if memory_dir.is_symlink():
-                ensure_real_dir(memory_dir, repo_fallback=canonical_dir)
-
-            if local_claude_md.is_symlink():
-                ensure_real_file(local_claude_md, repo_fallback=canonical_dir / "CLAUDE.md")
-
-        return ProjectPair(
-            local_memory=memory_dir,
-            local_claude_md=local_claude_md,
-            canonical_dir=canonical_dir,
-        )
 
     def _flag_unmapped(self, project_dir: Path) -> None:
         """Record an unmapped project in the shared repo ``.pending`` file."""
@@ -161,19 +147,19 @@ class ClaudeCodeTarget(SyncTarget):
         global_dir = self.repo_base / "claude" / "global"
         global_dir.mkdir(parents=True, exist_ok=True)
 
-        self._sync_file(self.claude_dir / "CLAUDE.md", global_dir / "CLAUDE.md", label="global CLAUDE.md")
-        self._sync_dir(self.claude_dir / "rules", global_dir / "rules", label="global rules")
+        self.mode.sync_file(self.claude_dir / "CLAUDE.md", global_dir / "CLAUDE.md", label="global CLAUDE.md")
+        self.mode.sync_dir(self.claude_dir / "rules", global_dir / "rules", label="global rules")
 
     def _sync_project(self, pair: ProjectPair) -> None:
         """Sync a single mapped project's CLAUDE.md and memory/ dir."""
         pair.canonical_dir.mkdir(parents=True, exist_ok=True)
 
-        self._sync_file(
+        self.mode.sync_file(
             pair.local_claude_md,
             pair.canonical_dir / "CLAUDE.md",
             label=f"CLAUDE.md for {pair.local_claude_md.parent.name}",
         )
-        self._sync_dir(pair.local_memory, pair.canonical_dir, label=pair.local_claude_md.parent.name)
+        self.mode.sync_dir(pair.local_memory, pair.canonical_dir, label=pair.local_claude_md.parent.name)
 
 
 def migrate_repo_names(repo_base: Path, mapping: dict[str, str]) -> None:

@@ -29,7 +29,7 @@ Timings below use AlfredMemory's `sync.ini`: quiet time (`debounce_seconds`) 600
 
 ## 1. Normal: this machine is up to date and edits
 
-The order in code is commit, then pull, then push (`src/git_sync.py:28-42`):
+The order in code is commit, then pull, then push (`src/git_sync.py:32-46`):
 
 1. A `.md` file changes in the data repo. Watchdog records the time.
 2. After 600 s with no further change: scan all targets.
@@ -81,7 +81,7 @@ Not handled:
 ## 6. One machine deleted a file, the other edited it
 
 1. `git pull --rebase` stops. Git leaves the edited version in the folder, with no markers.
-2. `_resolve_file` (`src/git_sync.py:100-110`) skips files without `<<<<<<<` and never runs `git add` on them.
+2. `_resolve_file` (`src/git_sync.py:104-114`) skips files without `<<<<<<<` and never runs `git add` on them.
 3. `rebase --continue` fails (file still unresolved). `resolve_conflicts` only aborts when nothing is unresolved, so it does nothing.
 4. Every later pull repeats steps 2-3 (tested: still stopped after a second pull). Push is rejected each time.
 
@@ -127,7 +127,7 @@ Handled:
 - Next start after a stop: `first_sync` pulls, scans, commits, and the commit's own pull and push go through. Symlink-mode edits made while the daemon was off are already in the repo folder, so they are included.
 
 Not handled:
-- After waking, the network is often not up yet. That pull fails silently, and the next try is a full 600 s later, because `run_intervals` (`src/cycle.py:63-66`) records the pull time before the pull runs, even when it fails.
+- After waking, the network is often not up yet. That pull fails silently, and the next try is a full 600 s later, because `run_intervals` (`src/cycle.py:67-70`) records the pull time before the pull runs, even when it fails.
 - Shutdown, `systemctl stop` or restart: SIGTERM ends Python at once (only Ctrl+C is caught). No final commit or push, so edits within the last 600 s stay on this machine until it starts again.
 
 ## 11. A target's scan fails
@@ -166,8 +166,6 @@ Flow differences from symlink mode:
 - Both sides changed on this machine between two scans: merged, both versions kept, before git is involved. Handled.
 
 Not handled:
-- Claude Code and Codex in copy mode treat every difference as a conflict (Bugs #1, fix in `stash@{0}`).
-- Two copy-mode targets in one repo erase each other's stored versions (Bugs #5, #6).
 - Deletes never spread (scenario 7).
 
 ## 16. Rare git states

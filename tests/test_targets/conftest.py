@@ -13,11 +13,9 @@ from src.sync_state import SyncState
 def isolated_sync_state(tmp_path, monkeypatch):
     """Give each test its own SyncState so hash tracking doesn't bleed between tests.
 
-    Since GenericTarget now creates its own SyncState instance on construction
-    (stored as self._sync_state), we patch the SyncState constructor so that any
-    instance created during the test shares both the backing file AND the in-memory
-    _hashes dict of the fixture's state.  This way, any hash written by a target's
-    _sync_state is immediately visible via isolated_sync_state.get_hash().
+    Every SyncState created during the test (e.g. by build_modes) shares the
+    fixture's backing file and in-memory _hashes dict, so any hash a target writes
+    is immediately visible via isolated_sync_state.get_hash().
     """
     fresh_state = SyncState(hash_file_path=tmp_path / ".mesy_sync_hashes.json")
 

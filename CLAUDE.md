@@ -12,8 +12,8 @@ python sync.py              # run daemon manually
 
 ## Architecture
 
-- `SyncTarget` (`src/targets/base.py`) owns file/folder sync (`_sync_file`, `_sync_dir`) for both modes; child targets only choose which local/repo pairs to sync
-- `src/factory.py` is the only module that knows concrete target classes
+- Sync modes (`src/sync_modes/`: `SymlinkMode`, `CopyMode`) own file/folder sync (`sync_file`, `sync_dir`), including link repair; targets only choose which local/repo pairs to sync and hand them to `self.mode`
+- `src/factory.py` is the only module that knows concrete target and mode classes; it builds one set of modes per data repo, so copy-mode targets share one hash file
 
 ## Rules
 

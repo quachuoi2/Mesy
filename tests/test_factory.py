@@ -77,6 +77,15 @@ class TestBuildTargets:
         assert isinstance(targets[0], ClaudeCodeTarget)
         assert isinstance(targets[1], GenericTarget)
 
+    def test_copy_targets_in_one_repo_share_one_mode(self, tmp_repo):
+        """Copy-mode targets in one repo share one SyncState, so neither erases the other's hashes."""
+        tdefs = [
+            {"name": name, "type": "generic", "source": Path("/tmp") / name, "repo_subdir": name, "sync_mode": "copy"}
+            for name in ("a", "b")
+        ]
+        targets = build_targets(tdefs, repo_base=tmp_repo)
+        assert targets[0].mode is targets[1].mode
+
 
 class TestGetAllStageDirs:
     def test_deduplicates_identical_dirs_across_targets(self, tmp_repo):

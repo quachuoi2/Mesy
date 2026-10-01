@@ -125,6 +125,8 @@ Copy mode stores a content hash after each sync (`src/sync_state.py`) and compar
 | changed | changed | conflict — both kept |
 | unchanged | unchanged | no action |
 
+With no stored hash yet, files that differ go to the source side's version, and identical files get their hash stored so the next one-sided edit is copied, not overwritten.
+
 ## Conflicts
 
 Nothing is lost in a conflict. Both versions are merged into **one file**, wrapped in `<!-- CONFLICT -->` markers, with `conflict: true` in the frontmatter. This applies to copy-mode and migration conflicts (both sides of the file) and to git rebase conflicts.

@@ -6,16 +6,19 @@ from pathlib import Path
 
 import pytest
 
+from src.factory import build_modes
+from src.sync_modes.symlink import SymlinkMode
 from src.targets.generic import GenericTarget
 
 
-def make_target(env, **kwargs) -> GenericTarget:
+def make_target(env, sync_mode="symlink", **kwargs) -> GenericTarget:
     """Build a GenericTarget using the generic_env fixture paths."""
     defaults = dict(
         name="test",
         src=env["src"],
         target_dir=env["target_dir"],
         repo_base=env["tmp_repo"],
+        mode=build_modes(env["tmp_repo"])[sync_mode],
     )
     defaults.update(kwargs)
     return GenericTarget(**defaults)
@@ -69,6 +72,7 @@ class TestSetup:
             name="test",
             src=missing_src,
             target_dir=generic_env["target_dir"],
+            mode=SymlinkMode(),
         )
 
         # Should not raise
@@ -158,7 +162,7 @@ class TestAdoptDirectory:
         def fake_merge(local, repo):
             merge_calls.append((local, repo))
 
-        monkeypatch.setattr("src.targets.base.merge_conflicting_file", fake_merge)
+        monkeypatch.setattr("src.sync_modes.symlink.merge_conflicting_file", fake_merge)
 
         # Write divergent content to both source and repo
         src_file = generic_env["src"] / "notes.md"
@@ -275,7 +279,7 @@ class TestAdoptDirectoryCopy:
             repo.write_text(merged)
             local.write_text(merged)
 
-        monkeypatch.setattr("src.targets.generic.merge_conflicting_file", fake_merge)
+        monkeypatch.setattr("src.sync_modes.copy.merge_conflicting_file", fake_merge)
 
         src_file = generic_env["src"] / "notes.md"
         repo_file = generic_env["target_dir"] / "notes.md"
@@ -344,7 +348,7 @@ class TestThreeWaySync:
         """Three-way sync: identical files → no copy, no merge."""
         merge_calls = []
         monkeypatch.setattr(
-            "src.targets.generic.merge_conflicting_file",
+            "src.sync_modes.copy.merge_conflicting_file",
             lambda local, repo: merge_calls.append((local, repo)),
         )
 
@@ -366,7 +370,7 @@ class TestThreeWaySync:
         """Three-way sync: no base hash (first sync) → source wins, no conflict."""
         merge_calls = []
         monkeypatch.setattr(
-            "src.targets.generic.merge_conflicting_file",
+            "src.sync_modes.copy.merge_conflicting_file",
             lambda local, repo: merge_calls.append((local, repo)),
         )
 
@@ -434,6 +438,18 @@ class TestThreeWaySync:
         assert src_link.read_text() == "# Remote"
 
 
+class TestSourceIsRepoFolder:
+    def test_source_that_is_the_repo_folder_is_left_alone(self, tmp_repo, isolated_sync_state):
+        """A target whose source is its own repo folder (DMNotes) writes no hashes."""
+        (tmp_repo / "notes.md").write_text("# Notes")
+
+        target = GenericTarget(name="notes", src=tmp_repo, target_dir=tmp_repo / ".",
+                               mode=build_modes(tmp_repo)["copy"], repo_base=tmp_repo)
+        target.scan()
+
+        assert isolated_sync_state.get_hash("notes.md") is None
+
+
 class TestGetStageDirs:
     def test_returns_relative_path_with_trailing_slash(self, generic_env):
         """get_stage_dirs() returns the repo_subdir relative to MESY_DIR."""
@@ -456,6 +472,7 @@ class TestGetStageDirs:
             name="test",
             src=generic_env["src"],
             target_dir=outside_dir,
+            mode=SymlinkMode(),
             repo_base=unrelated_repo_base,
         )
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from src.factory import build_modes
 from src.targets.claude_code import ClaudeCodeTarget
 
 
@@ -16,6 +17,7 @@ def make_target(claude_env) -> ClaudeCodeTarget:
         src=claude_env["projects_dir"],
         target_dir=claude_env["repo"] / "claude" / "projects",
         repo_base=claude_env["repo"],
+        mode=build_modes(claude_env["repo"])["symlink"],
         claude_dir=claude_env["claude_dir"],
         projects_dir=claude_env["projects_dir"],
     )
@@ -145,7 +147,7 @@ class TestScanProjects:
 
 class TestSyncClaudeMd:
     def test_copies_and_symlinks_project_claude_md(self, claude_env, monkeypatch):
-        """_sync_file() copies project CLAUDE.md to repo and symlinks it (symlink mode)."""
+        """mode.sync_file() copies project CLAUDE.md to repo and symlinks it (symlink mode)."""
         raw_name = "-home-user-Project"
         project_dir = claude_env["projects_dir"] / raw_name
         project_dir.mkdir(parents=True)
@@ -157,14 +159,14 @@ class TestSyncClaudeMd:
 
         target = make_target(claude_env)
         repo_claude = canonical_dir / "CLAUDE.md"
-        target._sync_file(local_claude, repo_claude, label=f"CLAUDE.md for {raw_name}")
+        target.mode.sync_file(local_claude, repo_claude, label=f"CLAUDE.md for {raw_name}")
 
         assert repo_claude.exists()
         assert local_claude.is_symlink()
         assert local_claude.resolve() == repo_claude.resolve()
 
     def test_skips_if_already_symlinked(self, claude_env):
-        """_sync_file() does nothing if CLAUDE.md is already a symlink (symlink mode)."""
+        """mode.sync_file() does nothing if CLAUDE.md is already a symlink (symlink mode)."""
         raw_name = "-home-user-Project"
         project_dir = claude_env["projects_dir"] / raw_name
         project_dir.mkdir(parents=True)
@@ -178,7 +180,7 @@ class TestSyncClaudeMd:
         local_claude.symlink_to(repo_claude)
 
         target = make_target(claude_env)
-        target._sync_file(local_claude, repo_claude, label=f"CLAUDE.md for {raw_name}")
+        target.mode.sync_file(local_claude, repo_claude, label=f"CLAUDE.md for {raw_name}")
 
         # Symlink should still resolve to the same place
         assert local_claude.is_symlink()
@@ -199,7 +201,7 @@ class TestSafetyVerification:
         (memory_dir / "important.md").write_text("critical data")
 
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
-        monkeypatch.setattr("src.targets.base.all_copied", lambda src, dest_dir: False)
+        monkeypatch.setattr("src.sync_modes.symlink.all_copied", lambda src, dest_dir: False)
         target = make_target(claude_env)
 
         with caplog.at_level(logging.ERROR, logger="mesy"):
@@ -217,9 +219,9 @@ def make_copy_target(claude_env) -> ClaudeCodeTarget:
         src=claude_env["projects_dir"],
         target_dir=claude_env["repo"] / "claude" / "projects",
         repo_base=claude_env["repo"],
+        mode=build_modes(claude_env["repo"])["copy"],
         claude_dir=claude_env["claude_dir"],
         projects_dir=claude_env["projects_dir"],
-        sync_mode="copy",
     )
 
 
@@ -336,6 +338,26 @@ class TestSymlinkToCopyMigration:
         assert memory_dir.is_symlink()
         assert memory_dir.resolve() == canonical_dir.resolve()
 
+    def test_dangling_memory_link_repointed_in_symlink_mode(self, claude_env, monkeypatch):
+        """symlink mode: a memory link left pointing at the old raw-named repo dir is re-pointed."""
+        raw_name = "-home-user-Renamed"
+        mapping = {raw_name: "Renamed"}
+
+        canonical_dir = claude_env["repo"] / "claude" / "projects" / "Renamed"
+        canonical_dir.mkdir(parents=True)
+        (canonical_dir / "notes.md").write_text("# Notes")
+
+        project_dir = claude_env["projects_dir"] / raw_name
+        project_dir.mkdir(parents=True)
+        memory_dir = project_dir / "memory"
+        memory_dir.symlink_to(claude_env["repo"] / "claude" / "projects" / raw_name)
+
+        monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: mapping)
+
+        make_target(claude_env).scan()
+
+        assert memory_dir.resolve() == canonical_dir.resolve()
+
     def test_symlinked_memory_dir_unmapped_left_alone_in_copy_mode(
         self, claude_env, monkeypatch
     ):
@@ -432,7 +454,7 @@ class TestSymlinkToCopyMigration:
         assert memory_dir.is_dir()
         assert list(memory_dir.iterdir()) == []
         assert any(
-            "No source data found" in r.message or "dangling symlink with no usable fallback" in r.message
+            "symlink target missing" in r.message or "dangling symlink with no usable fallback" in r.message
             for r in caplog.records
         )
 
@@ -615,7 +637,7 @@ class TestSyncFile:
         repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
         assert not repo.exists()
 
-        target._sync_file(local, repo, label="test file")
+        target.mode.sync_file(local, repo, label="test file")
 
         assert repo.read_text() == "# Local content"
         assert not local.is_symlink()
@@ -632,13 +654,13 @@ class TestSyncFile:
         local = claude_env["claude_dir"] / "CLAUDE.md"
         assert not local.exists()
 
-        target._sync_file(local, repo, label="test file")
+        target.mode.sync_file(local, repo, label="test file")
 
         assert local.read_text() == "# Repo content"
         assert not local.is_symlink()
 
     def test_copy_mode_conflict_delegates_to_merge(
-        self, claude_env, monkeypatch
+        self, claude_env, monkeypatch, isolated_sync_state
     ) -> None:
         """copy mode: diverged files trigger merge_conflicting_file."""
         merge_calls: list[tuple[Path, Path]] = []
@@ -646,7 +668,7 @@ class TestSyncFile:
         def fake_merge(local: Path, repo: Path) -> None:
             merge_calls.append((local, repo))
 
-        monkeypatch.setattr("src.targets.base.merge_conflicting_file", fake_merge)
+        monkeypatch.setattr("src.sync_modes.copy.merge_conflicting_file", fake_merge)
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
 
@@ -654,8 +676,9 @@ class TestSyncFile:
         local.write_text("# Local version")
         repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
         repo.write_text("# Repo version (different)")
+        isolated_sync_state.set_hash(str(repo.relative_to(claude_env["repo"])), "# Base version")
 
-        target._sync_file(local, repo, label="test file")
+        target.mode.sync_file(local, repo, label="test file")
 
         assert len(merge_calls) == 1
         assert merge_calls[0] == (local, repo)
@@ -665,7 +688,7 @@ class TestSyncDir:
     """Phase 3 _sync_dir coverage in copy mode — behavioral replacement for TestCopyDirFiles."""
 
     def test_copy_mode_dir_sync_conflict_delegates_to_merge(
-        self, claude_env, monkeypatch
+        self, claude_env, monkeypatch, isolated_sync_state
     ) -> None:
         """copy mode: files that differ between local and repo trigger merge."""
         merge_calls: list[tuple[Path, Path]] = []
@@ -673,7 +696,7 @@ class TestSyncDir:
         def fake_merge(local: Path, repo: Path) -> None:
             merge_calls.append((local, repo))
 
-        monkeypatch.setattr("src.targets.base.merge_conflicting_file", fake_merge)
+        monkeypatch.setattr("src.sync_modes.copy.merge_conflicting_file", fake_merge)
 
         raw_name = "-home-user-ConflictProject"
         mapping = {raw_name: "ConflictProject"}
@@ -688,6 +711,7 @@ class TestSyncDir:
         memory_dir = project_dir / "memory"
         memory_dir.mkdir(parents=True)
         (memory_dir / "notes.md").write_text("# Local version (different)")
+        isolated_sync_state.set_hash(str((canonical_dir / "notes.md").relative_to(claude_env["repo"])), "# Base version")
 
         monkeypatch.setattr(
             "src.targets.claude_code.load_project_mappings", lambda **kw: mapping

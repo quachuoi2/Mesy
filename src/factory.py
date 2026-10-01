@@ -14,10 +14,16 @@ from src.config import (
     load_sync_cfg,
     load_targets,
 )
+from src.sync_modes.base import SyncMode
+from src.sync_modes.copy import CopyMode
+from src.sync_modes.symlink import SymlinkMode
+from src.sync_state import SyncState
 from src.targets.base import SyncTarget
 from src.targets.claude_code import ClaudeCodeTarget
 from src.targets.codex import CodexTarget
 from src.targets.generic import GenericTarget
+
+HASH_FILE_NAME = ".mesy_sync_hashes.json"
 
 
 @dataclass
@@ -66,26 +72,26 @@ def _check_timings(repo_name: str, settings: dict) -> None:
             raise ValueError(f"[{repo_name}] {key} must be a finite positive number, got {settings[key]!r}")
 
 
-def _codex_target(target_def: dict, target_dir: Path, repo_base: Path, sync_mode: str) -> SyncTarget:
+def _codex_target(target_def: dict, target_dir: Path, repo_base: Path, mode: SyncMode) -> SyncTarget:
     return CodexTarget(
         name=target_def["name"],
         src=target_def["source"],
         target_dir=target_dir,
         repo_base=repo_base,
-        sync_mode=sync_mode,
+        mode=mode,
     )
 
 
-def _claude_code_target(target_def: dict, target_dir: Path, repo_base: Path, sync_mode: str) -> SyncTarget:
+def _claude_code_target(target_def: dict, target_dir: Path, repo_base: Path, mode: SyncMode) -> SyncTarget:
     return ClaudeCodeTarget(
         src=target_def["source"],
         target_dir=target_dir,
         repo_base=repo_base,
-        sync_mode=sync_mode,
+        mode=mode,
     )
 
 
-def _generic_target(target_def: dict, target_dir: Path, repo_base: Path, sync_mode: str) -> SyncTarget:
+def _generic_target(target_def: dict, target_dir: Path, repo_base: Path, mode: SyncMode) -> SyncTarget:
     return GenericTarget(
         name=target_def["name"],
         src=target_def["source"],
@@ -93,7 +99,7 @@ def _generic_target(target_def: dict, target_dir: Path, repo_base: Path, sync_mo
         repo_base=repo_base,
         file_patterns=target_def.get("file_patterns", list(DEFAULT_FILE_PATTERNS)),
         exclude=target_def.get("exclude", []),
-        sync_mode=sync_mode,
+        mode=mode,
     )
 
 
@@ -104,6 +110,13 @@ _BUILDERS = {
 }
 
 
+def build_modes(repo_base: Path) -> dict[str, SyncMode]:
+    """One object per mode for the whole repo: copy-mode targets must share one SyncState,
+    or each overwrites the others' hashes in the shared hash file."""
+    sync_state = SyncState(hash_file_path=repo_base / HASH_FILE_NAME)
+    return {"symlink": SymlinkMode(), "copy": CopyMode(sync_state, repo_base)}
+
+
 def build_targets(target_defs: list[dict], repo_base: Path) -> list[SyncTarget]:
     """Instantiate SyncTarget objects from config definitions.
 
@@ -112,12 +125,14 @@ def build_targets(target_defs: list[dict], repo_base: Path) -> list[SyncTarget]:
         repo_base: the data repo root — passed to each target so it can
             compute stage dirs and hash file paths without touching globals.
     """
+    modes = build_modes(repo_base)
+
     targets = []
     for target_def in target_defs:
         target_dir = repo_base / target_def["repo_subdir"]
-        sync_mode = target_def.get("sync_mode", DEFAULT_SYNC_MODE)
+        mode = modes[target_def.get("sync_mode", DEFAULT_SYNC_MODE)]
         builder = _BUILDERS[target_def["type"]]
-        targets.append(builder(target_def, target_dir, repo_base, sync_mode))
+        targets.append(builder(target_def, target_dir, repo_base, mode))
 
     return targets
 

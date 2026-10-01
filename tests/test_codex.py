@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.factory import build_modes
 from src.targets.codex import CodexTarget
 
 
@@ -19,7 +20,7 @@ def env(tmp_path):
 def _target(env, sync_mode="symlink"):
     codex_home, repo_base = env
     return CodexTarget(name="codex", src=codex_home, target_dir=repo_base / "codex",
-                       repo_base=repo_base, sync_mode=sync_mode)
+                       repo_base=repo_base, mode=build_modes(repo_base)[sync_mode])
 
 
 def test_adopts_agents_and_nested_memories(env):
@@ -59,6 +60,32 @@ def test_copy_mode_keeps_real_files(env):
     assert not (codex_home / "memories").is_symlink()
     assert (repo_base / "codex" / "memories" / "sub" / "a.md").read_text() == "local"
     assert (codex_home / "memories" / "b.md").read_text() == "remote"
+
+
+def test_copy_mode_takes_one_sided_repo_edit(env):
+    codex_home, repo_base = env
+    (codex_home / "AGENTS.md").write_text("v1")
+    (repo_base / "codex").mkdir()
+    (repo_base / "codex" / "AGENTS.md").write_text("v1")
+    target = _target(env, sync_mode="copy")
+    target.scan()
+
+    (repo_base / "codex" / "AGENTS.md").write_text("v2")
+    target.scan()
+
+    assert (codex_home / "AGENTS.md").read_text() == "v2"
+
+
+def test_copy_mode_replaces_leftover_link_with_real_file(env):
+    codex_home, repo_base = env
+    (repo_base / "codex").mkdir()
+    (repo_base / "codex" / "AGENTS.md").write_text("rules")
+    (codex_home / "AGENTS.md").symlink_to(repo_base / "codex" / "AGENTS.md")
+
+    _target(env, sync_mode="copy").scan()
+
+    assert not (codex_home / "AGENTS.md").is_symlink()
+    assert (codex_home / "AGENTS.md").read_text() == "rules"
 
 
 def test_stage_dir_is_repo_subdir(env):

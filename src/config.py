@@ -85,9 +85,6 @@ def load_project_mappings(repo_base: Path) -> dict[str, str]:
     projects_cfg.read(projects_cfg_path)
 
     for section in projects_cfg.sections():
-        if section == "mesy":
-            continue
-
         canonical = section
         paths_str = projects_cfg.get(section, "paths", fallback="")
         for raw_name in paths_str.split(","):
