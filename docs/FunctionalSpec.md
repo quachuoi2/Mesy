@@ -65,13 +65,13 @@ The Claude Code target ignores `source` and `repo_subdir`. It always uses `~/.cl
 
 Commit and push:
 
-1. Stop if the repo has no changes.
+1. Stop if the repo has no changes and the branch is not ahead of `origin`.
 2. `git add` the targets' folders only.
 3. Commit `sync from <host> at <time>` (ISO 8601, UTC+7), with a list of added, updated and deleted files.
 4. `git pull --rebase origin <branch>`. On failure, run conflict handling (section 7).
-5. `git push origin <branch>`. On failure, the commit stays local and goes out with the next push.
+5. `git push origin <branch>`. On failure, the commit stays local until the next start or the next change.
 
-Every git call times out after 30 s.
+Every git call times out after 30 s and runs with `GIT_EDITOR=true`, so git never waits for an editor.
 
 ## 5. Targets
 
@@ -149,7 +149,7 @@ Git rebase conflicts keep git's own markers (`HEAD` is the other machine's side)
 | Any target's scan fails | No commits for the whole data repo; pulls continue. Logged once at ERROR until the message changes; INFO on recovery |
 | Repo has both `<raw>/` and `<canonical>/` for a mapped project | Scan fails every cycle until the raw folder is merged by hand |
 | Pull fails (offline) | Retried next interval |
-| Push fails | Warning; commit stays local |
+| Push fails | Warning; commit stays local until the next start or the next change |
 | Git call times out | Warning; retried next cycle |
 | Misconfiguration at start | Exit 1; systemd restarts every 10 s until fixed |
 

@@ -1,6 +1,6 @@
 # Mesy — Sync Flow Scenarios
 
-As of 2026-09-30 (branch `main`, `f756b76`). Behavior reference: [FunctionalSpec.md](FunctionalSpec.md). Known bugs: [Bugs.md](Bugs.md), cited as "Bugs #n".
+As of 2026-10-01 (branch `main`, after `1a74924`). Behavior reference: [FunctionalSpec.md](FunctionalSpec.md). Known bugs: [Bugs.md](Bugs.md), cited as "Bugs #n".
 
 "Tested" means reproduced with Mesy's own `src/git_sync.py` functions on throwaway repos, with no `TERM` and no `EDITOR` set, the same as the systemd service.
 
@@ -14,7 +14,7 @@ Timings below use AlfredMemory's `sync.ini`: quiet time (`debounce_seconds`) 600
 | 2 | Another machine pushed, this machine has no edits | Works |
 | 3 | Two machines changed different files | Works |
 | 4 | Two machines changed the same file, different lines | Works |
-| 5 | Two machines changed the same lines, or created the same new file | **Broken** (new finding) |
+| 5 | Two machines changed the same lines, or created the same new file | Works |
 | 6 | One machine deleted a file, the other edited it | **Broken** (new finding) |
 | 7 | Deletes without a conflict | Partly |
 | 8 | Offline, or push rejected | Partly |
@@ -29,7 +29,7 @@ Timings below use AlfredMemory's `sync.ini`: quiet time (`debounce_seconds`) 600
 
 ## 1. Normal: this machine is up to date and edits
 
-The order in code is commit, then pull, then push (`src/git_sync.py:32-46`):
+The order in code is commit, then pull, then push (`src/git_sync.py:34-51`):
 
 1. A `.md` file changes in the data repo. Watchdog records the time.
 2. After 600 s with no further change: scan all targets.
@@ -63,23 +63,13 @@ Flow now:
 
 1. `git pull --rebase` stops on the conflict.
 2. `resolve_conflicts` leaves git's markers as they are and runs `git add`.
-3. `git rebase --continue` tries to open a text editor for the commit message. The service has no terminal and no `EDITOR`, so it fails (tested). The rebase stays stopped halfway, the repo is not on a branch, and the push is rejected.
-4. What happens next depends on which comes first:
-
-| Next event | Result |
-|------------|--------|
-| Interval pull | `rebase --continue` fails again, so `rebase --abort` throws the resolution away. The pull after that hits the same conflict. Repeats (tested) |
-| A Mesy commit (new local edit, or watchdog seeing the conflict file git wrote) | `git commit -m` needs no editor and finishes the rebase; push works (tested) |
-
-With quiet time ≥ pull interval (AlfredMemory: 600/600) the pull comes first, so the loop repeats until a local edit happens to land during a stopped phase. DMNotes (90/180) finishes on its own.
-
-Not handled:
-- The editor problem above. Setting `GIT_EDITOR=true` for Mesy's git calls fixes it (tested: the rebase then finishes in one pass).
+3. `git rebase --continue` finishes in one pass. Mesy runs git with `GIT_EDITOR=true`, so git never waits for an editor.
+4. The markers are committed and pushed. A person resolves them by hand.
 
 ## 6. One machine deleted a file, the other edited it
 
 1. `git pull --rebase` stops. Git leaves the edited version in the folder, with no markers.
-2. `_resolve_file` (`src/git_sync.py:104-114`) skips files without `<<<<<<<` and never runs `git add` on them.
+2. `_resolve_file` (`src/git_sync.py:111-121`) skips files without `<<<<<<<` and never runs `git add` on them.
 3. `rebase --continue` fails (file still unresolved). `resolve_conflicts` only aborts when nothing is unresolved, so it does nothing.
 4. Every later pull repeats steps 2-3 (tested: still stopped after a second pull). Push is rejected each time.
 
@@ -100,8 +90,7 @@ Rules per link type are in [FunctionalSpec.md §6](FunctionalSpec.md) (Deletes).
 4. Back online: the next interval pull replays local commits on top of the remote. Conflicts go to scenario 5 or 6.
 
 Not handled:
-- **Push only runs after a new commit.** `commit_and_push` returns early when there is nothing new to commit (tested: still 1 commit ahead of GitHub). Offline edits reach GitHub only when this machine edits again.
-- Same for a push rejected because another machine pushed between this machine's pull and push.
+- **No push retry while running.** Commits left by a failed or rejected push go out at the next start or the next change, but not on the pull timer.
 - A login or SSH key failure looks the same as offline in the log.
 
 ## 9. Switching machines before the first one pushed

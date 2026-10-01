@@ -54,6 +54,22 @@ class TestGitHelper:
 
         assert kwargs_captured.get("timeout") == 30
 
+    def test_git_never_waits_for_an_editor(self, tmp_repo, monkeypatch):
+        """git() sets GIT_EDITOR so rebase --continue cannot hang on an editor."""
+        kwargs_captured = {}
+
+        def fake_run(cmd, **kwargs):
+            kwargs_captured.update(kwargs)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        from src.git_sync import git
+
+        git("rebase", "--continue", repo_base=tmp_repo)
+
+        assert kwargs_captured["env"]["GIT_EDITOR"] == "true"
+
 
 class TestHasLocalChanges:
     def test_returns_true_when_changes(self, tmp_repo, monkeypatch):
@@ -107,21 +123,40 @@ class TestCommitAndPush:
         assert "update file.md" in commit_msg
 
     def test_skips_when_no_changes(self, tmp_repo, monkeypatch):
-        """commit_and_push() exits early when has_local_changes() is False."""
+        """commit_and_push() exits early when there is nothing to commit or push."""
         commands = []
 
         def fake_run(cmd, **kw):
             commands.append(cmd)
-            # status returns empty -> no changes
+            if "rev-list" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, "0\n", "")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("subprocess.run", fake_run)
 
         commit_and_push(["global/"], repo_base=tmp_repo)
 
-        # Only the status check should have run
         git_subcommands = [c[3] for c in commands if c[0] == "git"]
-        assert git_subcommands == ["status"]
+        assert "pull" not in git_subcommands
+        assert "push" not in git_subcommands
+
+    def test_pushes_commits_left_by_an_earlier_failed_push(self, tmp_repo, monkeypatch):
+        """commit_and_push() pushes when nothing is new but the branch is ahead of origin."""
+        commands = []
+
+        def fake_run(cmd, **kw):
+            commands.append(cmd)
+            if "rev-list" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, "4\n", "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        commit_and_push(["global/"], repo_base=tmp_repo)
+
+        git_subcommands = [c[3] for c in commands if c[0] == "git"]
+        assert "commit" not in git_subcommands
+        assert "push" in git_subcommands
 
     def test_handles_push_failure(self, tmp_repo, monkeypatch, caplog):
         """commit_and_push() logs a warning when push fails (offline)."""

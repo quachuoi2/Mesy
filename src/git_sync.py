@@ -1,6 +1,7 @@
 """Git operations for the Mesy repo."""
 
 import logging
+import os
 import socket
 import subprocess
 from pathlib import Path
@@ -15,7 +16,9 @@ log = logging.getLogger("mesy")
 def git(*args: str, repo_base: Path, check: bool = False) -> subprocess.CompletedProcess:
     cmd = ["git", "-C", str(repo_base)] + list(args)
     log.debug("git %s", " ".join(args))
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=check)
+    # rebase --continue opens an editor otherwise; the daemon has no terminal, so it hangs until timeout.
+    env = {**os.environ, "GIT_EDITOR": "true"}
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=check, env=env)
 
 
 def has_local_changes(repo_base: Path) -> bool:
@@ -35,7 +38,7 @@ def commit_and_push(stage_dirs: list[str], repo_base: Path) -> None:
         stage_dirs: directories to git-add.
         repo_base: root of the git repo to operate on.
     """
-    if not _commit(stage_dirs, repo_base):
+    if not _commit(stage_dirs, repo_base) and not _has_unpushed(repo_base):
         return
 
     pull_remote(repo_base)
@@ -43,6 +46,11 @@ def commit_and_push(stage_dirs: list[str], repo_base: Path) -> None:
     push_result = git("push", "origin", current_branch(repo_base), repo_base=repo_base)
     if push_result.returncode != 0:
         log.warning("push failed (offline?): %s", push_result.stderr)
+
+
+def _has_unpushed(repo_base: Path) -> bool:
+    result = git("rev-list", "--count", f"origin/{current_branch(repo_base)}..HEAD", repo_base=repo_base)
+    return result.returncode == 0 and int(result.stdout.strip() or 0) > 0
 
 
 def _commit(stage_dirs: list[str], repo_base: Path) -> bool:
