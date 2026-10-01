@@ -74,27 +74,6 @@ def get_mesy_settings(sync_cfg: ConfigParser) -> dict:
     return dict(sync_cfg["mesy"])
 
 
-def load_project_mappings(repo_base: Path) -> dict[str, str]:
-    """Load projects.ini from repo_base and return {raw_claude_name: canonical_name} mapping."""
-    projects_cfg_path = repo_base / "claude" / "projects.ini"
-    mapping = {}
-    if not projects_cfg_path.exists():
-        return mapping
-
-    projects_cfg = ConfigParser()
-    projects_cfg.read(projects_cfg_path)
-
-    for section in projects_cfg.sections():
-        canonical = section
-        paths_str = projects_cfg.get(section, "paths", fallback="")
-        for raw_name in paths_str.split(","):
-            raw_name = raw_name.strip()
-            if raw_name:
-                mapping[raw_name] = canonical
-
-    return mapping
-
-
 def load_targets(sync_cfg: ConfigParser) -> list[dict]:
     """Parse [target:*] sections from config into target definitions.
 

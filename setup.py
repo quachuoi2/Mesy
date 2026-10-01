@@ -24,7 +24,6 @@ from src.config import (
     MESY_DIR,
     REPOS_CFG_PATH,
     SETTING_DEFAULTS,
-    load_project_mappings,
     load_repos,
     load_sync_cfg,
     load_targets,
@@ -33,7 +32,7 @@ from src.git_sync import DEFAULT_BRANCH, git
 from src.pending import add_pending
 from src.conflict import merge_conflicting_file
 from src.sync_modes.symlink import all_copied, merge_into
-from src.targets.claude_code import CLAUDE_DIR, migrate_repo_names
+from src.targets.claude_code import CLAUDE_DIR, load_project_mappings, migrate_repo_names
 from src.targets.generic import is_excluded, matches_patterns
 
 IS_WINDOWS = platform.system() == "Windows"

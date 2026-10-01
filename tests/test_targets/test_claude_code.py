@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.factory import build_modes
-from src.targets.claude_code import ClaudeCodeTarget
+from src.targets.claude_code import ClaudeCodeTarget, load_project_mappings
 
 
 def make_target(claude_env) -> ClaudeCodeTarget:
@@ -732,3 +732,22 @@ class TestGetStageDirs:
         target = make_target(claude_env)
 
         assert target.get_stage_dirs() == ["claude/global/", "claude/projects/"]
+
+
+class TestLoadProjectMappings:
+    def test_load_project_mappings(self, tmp_repo):
+        """Mappings from projects.ini are parsed correctly."""
+        projects_cfg_path = tmp_repo / "claude" / "projects.ini"
+        projects_cfg_path.write_text(
+            "[Workspace]\n"
+            "paths = -home-user-Workspace, -home-user2-Workspace\n"
+        )
+
+        mappings = load_project_mappings(tmp_repo)
+        assert mappings["-home-user-Workspace"] == "Workspace"
+        assert mappings["-home-user2-Workspace"] == "Workspace"
+
+    def test_missing_projects_cfg(self, tmp_repo):
+        """load_project_mappings(tmp_repo) returns empty dict when projects.ini missing."""
+        mappings = load_project_mappings(tmp_repo)
+        assert mappings == {}

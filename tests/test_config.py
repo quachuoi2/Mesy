@@ -7,7 +7,6 @@ import pytest
 from src.factory import RepoCtx
 from src.config import (
     get_mesy_settings,
-    load_project_mappings,
     load_repos,
     load_sync_cfg,
     load_targets,
@@ -300,22 +299,3 @@ class TestRepoCtx:
         )
         assert len(repo_ctx.targets) == 1
         assert repo_ctx.stage_dirs == ["global/", "projects/"]
-
-
-class TestLoadProjectMappings:
-    def test_load_project_mappings(self, tmp_repo):
-        """Mappings from projects.ini are parsed correctly."""
-        projects_cfg_path = tmp_repo / "claude" / "projects.ini"
-        projects_cfg_path.write_text(
-            "[Workspace]\n"
-            "paths = -home-user-Workspace, -home-user2-Workspace\n"
-        )
-
-        mappings = load_project_mappings(tmp_repo)
-        assert mappings["-home-user-Workspace"] == "Workspace"
-        assert mappings["-home-user2-Workspace"] == "Workspace"
-
-    def test_missing_projects_cfg(self, tmp_repo):
-        """load_project_mappings(tmp_repo) returns empty dict when projects.ini missing."""
-        mappings = load_project_mappings(tmp_repo)
-        assert mappings == {}

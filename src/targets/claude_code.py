@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+from configparser import ConfigParser
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.config import DEFAULT_FILE_PATTERNS, load_project_mappings
+from src.config import DEFAULT_FILE_PATTERNS
 from src.pending import add_pending, pending_path, prune_pending
 from src.sync_modes.base import SyncMode
 from src.targets.base import SyncTarget
@@ -169,6 +170,27 @@ class ClaudeCodeTarget(SyncTarget):
             label=f"CLAUDE.md for {pair.local_claude_md.parent.name}",
         )
         self.mode.sync_dir(pair.local_memory, pair.canonical_dir, label=pair.local_claude_md.parent.name)
+
+
+def load_project_mappings(repo_base: Path) -> dict[str, str]:
+    """Load projects.ini from repo_base and return {raw_claude_name: canonical_name} mapping."""
+    projects_cfg_path = repo_base / "claude" / "projects.ini"
+    mapping = {}
+    if not projects_cfg_path.exists():
+        return mapping
+
+    projects_cfg = ConfigParser()
+    projects_cfg.read(projects_cfg_path)
+
+    for section in projects_cfg.sections():
+        canonical = section
+        paths_str = projects_cfg.get(section, "paths", fallback="")
+        for raw_name in paths_str.split(","):
+            raw_name = raw_name.strip()
+            if raw_name:
+                mapping[raw_name] = canonical
+
+    return mapping
 
 
 def migrate_repo_names(repo_base: Path, mapping: dict[str, str]) -> None:
