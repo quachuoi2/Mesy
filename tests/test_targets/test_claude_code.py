@@ -543,87 +543,8 @@ class TestUnmappedMarker:
         assert not pending_file.exists()
 
 
-class TestPhase1RepoRename:
-    def test_renames_raw_dir_in_repo_to_canonical(self, claude_env, monkeypatch) -> None:
-        """scan() renames a raw-named repo dir to its canonical name via Phase 1."""
-        raw_name = "-home-user-OldProject"
-        mapping = {raw_name: "OldProject"}
-
-        projects_dir = claude_env["repo"] / "claude" / "projects"
-        raw_dir = projects_dir / raw_name
-        raw_dir.mkdir(parents=True)
-        (raw_dir / "notes.md").write_text("# Old Notes")
-
-        monkeypatch.setattr(
-            "src.targets.claude_code.load_project_mappings", lambda **kw: mapping
-        )
-
-        target = make_target(claude_env)
-        target.scan()
-
-        canonical_dir = projects_dir / "OldProject"
-        assert canonical_dir.exists()
-        assert (canonical_dir / "notes.md").exists()
-        assert not raw_dir.exists()
-
-    def test_skips_when_canonical_already_exists(self, claude_env, monkeypatch) -> None:
-        """scan() does not clobber an existing canonical dir if raw dir also exists."""
-        raw_name = "-home-user-Project"
-        mapping = {raw_name: "Project"}
-
-        projects_dir = claude_env["repo"] / "claude" / "projects"
-        raw_dir = projects_dir / raw_name
-        raw_dir.mkdir(parents=True)
-        (raw_dir / "raw.md").write_text("raw data")
-        canonical_dir = projects_dir / "Project"
-        canonical_dir.mkdir(parents=True)
-        (canonical_dir / "existing.md").write_text("already here")
-
-        monkeypatch.setattr(
-            "src.targets.claude_code.load_project_mappings", lambda **kw: mapping
-        )
-
-        target = make_target(claude_env)
-        # scan() would assert the raw dir remains if rename was skipped — but
-        # because the raw name still appears in mapping, _assert_phase1_invariants
-        # will raise.  Catch that so we can still assert the raw dir is intact.
-        try:
-            target.scan()
-
-        except AssertionError:
-            pass
-
-        # raw_dir must not have been renamed / merged into canonical_dir
-        assert raw_dir.exists(), "raw dir must be left intact to avoid data loss"
-        assert (canonical_dir / "existing.md").exists()
-
-
-class TestPhase1Invariants:
-    def test_raises_when_raw_name_remains_after_phase1(
-        self, claude_env, monkeypatch
-    ) -> None:
-        """_assert_phase1_invariants raises if a raw-named dir persists in the repo.
-
-        We simulate a failed rename by creating the raw-named dir and calling
-        _assert_phase1_invariants directly.
-        """
-        raw_name = "-home-user-Stuck"
-        mapping = {raw_name: "Stuck"}
-
-        projects_dir = claude_env["repo"] / "claude" / "projects"
-        (projects_dir / raw_name).mkdir()
-
-        monkeypatch.setattr(
-            "src.targets.claude_code.load_project_mappings", lambda **kw: mapping
-        )
-        target = make_target(claude_env)
-
-        with pytest.raises(AssertionError, match="Phase 1 invariant violated"):
-            target._assert_phase1_invariants(mapping)
-
-
 class TestSyncFile:
-    """Phase 3 _sync_file coverage in copy mode (behavioral replacement for TestSyncFileCopy)."""
+    """Copy-mode coverage of sync_file."""
 
     def test_copy_mode_local_to_repo_when_repo_missing(
         self, claude_env, monkeypatch
@@ -685,7 +606,7 @@ class TestSyncFile:
 
 
 class TestSyncDir:
-    """Phase 3 _sync_dir coverage in copy mode — behavioral replacement for TestCopyDirFiles."""
+    """Copy-mode coverage of sync_dir."""
 
     def test_copy_mode_dir_sync_conflict_delegates_to_merge(
         self, claude_env, monkeypatch, isolated_sync_state

@@ -94,7 +94,7 @@ def ensure_real_file(path: Path, repo_fallback: Path | None) -> bool:
     Copies the link target, or *repo_fallback* when the target is missing.
     Returns True when a real file was written.  A dangling link with no usable
     fallback is removed and False returned.  Never merges content and never
-    writes to the repo; content reconciliation is Phase 3's job.
+    writes to the repo; merging is left to ``_three_way_sync``.
     """
     if not path.is_symlink():
         return False
@@ -129,7 +129,6 @@ def ensure_real_dir(path: Path, repo_fallback: Path | None) -> bool:
 
     Files only — does not recurse into subdirectories.
     Atomic via tmp+rename: a crash mid-copy leaves the original symlink intact.
-    Never merges conflicts — that is Phase 3's job.
     """
     if not path.is_symlink():
         return False

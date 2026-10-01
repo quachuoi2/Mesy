@@ -1,4 +1,4 @@
-"""Claude Code sync target — project mapping, CLAUDE.md and rules/ sync, three-phase model."""
+"""Claude Code sync target — project mapping, CLAUDE.md and rules/ sync."""
 
 from __future__ import annotations
 
@@ -55,10 +55,9 @@ class ClaudeCodeTarget(SyncTarget):
         pass
 
     def scan(self) -> None:
-        """Discover projects and sync them using the three-phase model."""
+        """Discover projects and sync them."""
         mapping = load_project_mappings(repo_base=self.repo_base)
 
-        migrate_repo_names(self.repo_base, mapping)
         prune_pending(self.repo_base, mapping)
 
         if not self.projects_dir.exists():
@@ -66,35 +65,16 @@ class ClaudeCodeTarget(SyncTarget):
         else:
             pairs = self._walk_and_adopt(mapping)
 
-        self._assert_phase1_invariants(mapping)
         self._sync(pairs)
 
     def get_stage_dirs(self) -> list[str]:
         return ["claude/global/", "claude/projects/"]
 
-    def _assert_phase1_invariants(self, mapping: dict[str, str]) -> None:
-        """Assert no raw names from the mapping remain as dirs in the repo.
-
-        Runs after Phase 1 migration, before Phase 3 sync.  Raises
-        AssertionError on violation so callers can catch and log.
-        """
-        repo_projects_dir = self.repo_base / "claude" / "projects"
-        if not repo_projects_dir.exists():
-            return
-
-        existing = {d.name for d in repo_projects_dir.iterdir() if d.is_dir()}
-        for raw in mapping:
-            if raw in existing:
-                raise AssertionError(
-                    f"Phase 1 invariant violated: raw-named dir '{raw}' still exists "
-                    f"in repo after migration. Check migrate_repo_names."
-                )
-
     def _walk_and_adopt(self, mapping: dict[str, str]) -> list[ProjectPair]:
         """Walk ~/.claude/projects/, classify each, return mapped-only pairs.
 
-        For unmapped projects: append the raw name to the shared repo
-        ``.pending`` file and do NOT yield a pair — Phase 3 never sees them.
+        Unmapped projects are recorded in the shared repo ``.pending`` file
+        and never synced.
         """
         pairs: list[ProjectPair] = []
 
@@ -192,25 +172,3 @@ def load_project_mappings(repo_base: Path) -> dict[str, str]:
 
     return mapping
 
-
-def migrate_repo_names(repo_base: Path, mapping: dict[str, str]) -> None:
-    """Rename raw-named project dirs in the repo to their canonical names."""
-    repo_projects_dir = repo_base / "claude" / "projects"
-    if not repo_projects_dir.exists():
-        return
-
-    raw_canonical_names: dict[str, list[str]] = {}
-    for raw, canonical in mapping.items():
-        raw_canonical_names.setdefault(canonical, []).append(raw)
-
-    for canonical, raw_names in raw_canonical_names.items():
-        canonical_dir = repo_projects_dir / canonical
-        if canonical_dir.exists():
-            continue
-
-        for raw_name in raw_names:
-            raw_dir = repo_projects_dir / raw_name
-            if raw_dir.exists() and raw_dir.is_dir():
-                raw_dir.rename(canonical_dir)
-                log.info("Renamed repo dir: %s -> %s", raw_name, canonical)
-                break

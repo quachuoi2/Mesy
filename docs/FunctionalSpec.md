@@ -86,7 +86,7 @@ Every git call times out after 30 s.
 
 A generic target whose source is its own repo folder (DMNotes) is not synced in either mode, only committed and pushed.
 
-Claude Code scan order: load mapping → rename raw-named repo folders to canonical → prune `.pending` → sync each mapped project that has `memory/` or `CLAUDE.md` → record unmapped ones in `.pending`.
+Claude Code scan order: load mapping → prune `.pending` → sync each mapped project that has `memory/` or `CLAUDE.md` → record unmapped ones in `.pending`.
 
 ## 6. Sync modes
 

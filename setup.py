@@ -32,7 +32,7 @@ from src.git_sync import DEFAULT_BRANCH, git
 from src.pending import add_pending
 from src.conflict import merge_conflicting_file
 from src.sync_modes.symlink import all_copied, merge_into
-from src.targets.claude_code import CLAUDE_DIR, load_project_mappings, migrate_repo_names
+from src.targets.claude_code import CLAUDE_DIR, load_project_mappings
 from src.targets.generic import is_excluded, matches_patterns
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -385,7 +385,6 @@ def setup_claude_code_symlinks(repo_base: Path) -> None:
     make_symlink(CLAUDE_DIR / "rules", repo_base / "claude" / "global" / "rules")
 
     mapping = load_project_mappings(repo_base)
-    migrate_repo_names(repo_base, mapping)
 
     claude_projects_dir = CLAUDE_DIR / "projects"
     if claude_projects_dir.exists():
