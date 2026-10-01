@@ -14,19 +14,27 @@ def isolated_sync_state(tmp_path, monkeypatch):
     """Give each test its own SyncState so hash tracking doesn't bleed between tests.
 
     Every SyncState created during the test (e.g. by build_modes) shares the
-    fixture's backing file and in-memory _hashes dict, so any hash a target writes
-    is immediately visible via isolated_sync_state.get_hash().
+    fixture's backing files and in-memory dicts, so any hash or text a target writes
+    is immediately visible via isolated_sync_state.get_hash() and get_text().
     """
-    fresh_state = SyncState(hash_file_path=tmp_path / ".mesy_sync_hashes.json")
+    fresh_state = SyncState(
+        hash_file_path=tmp_path / ".mesy_sync_hashes.json",
+        text_file_path=tmp_path / "mesy_sync_texts.json",
+    )
 
     original_init = SyncState.__init__
 
-    def patched_init(self_inner, hash_file_path: Path) -> None:
-        # Point every new SyncState at the same backing file as the fixture state.
-        original_init(self_inner, hash_file_path=fresh_state._hash_file_path)
-        # Share the same in-memory dict so writes by any instance are visible to
+    def patched_init(self_inner, hash_file_path: Path, text_file_path: Path) -> None:
+        # Point every new SyncState at the same backing files as the fixture state.
+        original_init(
+            self_inner,
+            hash_file_path=fresh_state._hash_file_path,
+            text_file_path=fresh_state._text_file_path,
+        )
+        # Share the same in-memory dicts so writes by any instance are visible to
         # the fixture object immediately (without needing to reload from disk).
         self_inner._hashes = fresh_state._hashes
+        self_inner._texts = fresh_state._texts
 
     monkeypatch.setattr(SyncState, "__init__", patched_init)
     return fresh_state

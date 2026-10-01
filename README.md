@@ -116,20 +116,26 @@ All three intervals must be finite positive numbers. A missing, zero, negative, 
 | `symlink` | Source files replaced with symlinks into the repo | Claude Code |
 | `copy` | Bidirectional copy with three-way hash tracking | OpenClaw (no symlink support) |
 
-Copy mode stores a content hash after each sync (`src/sync_state.py`) and compares both sides against it:
+Copy mode stores a content hash and the text of each file after each sync (`src/sync_state.py`) and compares both sides against it:
 
 | Source | Repo | Result |
 |--------|------|--------|
 | changed | unchanged | source wins |
 | unchanged | changed | repo wins |
-| changed | changed | conflict — both kept |
+| changed | changed | merged against the stored text (see Conflicts) |
 | unchanged | unchanged | no action |
 
 With no stored hash yet, files that differ go to the source side's version, and identical files get their hash stored so the next one-sided edit is copied, not overwritten.
 
 ## Conflicts
 
-Nothing is lost in a conflict. Both versions are merged into **one file**, wrapped in `<!-- CONFLICT -->` markers, with `conflict: true` in the frontmatter. This applies to copy-mode and migration conflicts (both sides of the file) and to git rebase conflicts.
+Nothing is lost in a conflict. Edits that don't overlap are merged; overlapping lines get git's own `<<<<<<<` / `=======` / `>>>>>>>` markers, and the file is written to both sides. VS Code shows Accept buttons above each marked block.
+
+| Where | Merge | Labels |
+|---|---|---|
+| Git rebase | git's, left as is | `HEAD` = the other machine; the other label names this machine's commit (`sync from <host> at <time>`) |
+| Copy mode, both sides changed | `git merge-file` against the stored text | `local (<host>)` / `repo` |
+| Migration (a real local file meets a different repo copy) | `git merge-file` with no base: every differing block is marked | `local (<host>)` / `repo` |
 
 ## Project Name Mapping (Claude Code)
 

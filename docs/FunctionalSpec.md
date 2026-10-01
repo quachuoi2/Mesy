@@ -13,6 +13,7 @@ As of 2026-10-01 (branch `main`). Product context: [ProductSpec.md](ProductSpec.
 | `sync.ini` | Data repo root | Timing and targets for that repo |
 | `claude/projects.ini` | Data repo | Claude Code project name mapping |
 | `.mesy_sync_hashes.json` | Data repo root | Copy-mode hashes for this device. Never committed |
+| `.git/mesy_sync_texts.json` | Data repo | Copy-mode text of each file at its last sync on this device, used as the merge base. Never committed |
 
 ## 2. Configuration
 
@@ -102,7 +103,7 @@ Copy (all targets, using per-device hashes):
 |-----------|-----------|--------|
 | changed | unchanged | Tool side copied to repo |
 | unchanged | changed | Repo copied to tool side |
-| changed | changed | Conflict merge |
+| changed | changed | Merged against the last synced text (section 7) |
 | no stored hash | differs | Tool side wins |
 
 - A file on only one side is copied to the other.
@@ -118,21 +119,22 @@ Deletes:
 
 ## 7. Conflicts
 
-Both versions are kept in one file, written to both sides:
+Copy-mode and migration conflicts run `git merge-file local base repo`; the result is written to both sides:
+
+- Base: the last synced text in copy mode; empty for migration (a real local file meeting a different repo copy) or when no text is stored yet.
+- Edits that don't overlap are combined. Overlapping lines get git's markers; with an empty base, every differing block does:
 
 ```markdown
----
-conflict: true
-<frontmatter from both sides>
----
-
-<!-- CONFLICT (<time>): local (<host>) version -->
+<<<<<<< local (<host>)
 ...
-<!-- CONFLICT (<time>): repo version -->
+=======
 ...
+>>>>>>> repo
 ```
 
-Git rebase conflicts get the same markers in place of `<<<<<<<`, `=======`, `>>>>>>>`, then the rebase continues. `conflict: true` is added as the first frontmatter line; a file with no frontmatter gets a new block. A person resolves the file by hand.
+- A file git cannot merge (binary) fails the scan.
+
+Git rebase conflicts keep git's own markers (`HEAD` is the other machine's side); Mesy runs `git add` and continues the rebase. A person resolves marked blocks by hand.
 
 ## 8. Unmapped Claude Code projects
 

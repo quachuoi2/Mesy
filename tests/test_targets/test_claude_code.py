@@ -546,7 +546,7 @@ class TestSyncFile:
         """copy mode: diverged files trigger merge_conflicting_file."""
         merge_calls: list[tuple[Path, Path]] = []
 
-        def fake_merge(local: Path, repo: Path) -> None:
+        def fake_merge(local: Path, repo: Path, base_text: str) -> None:
             merge_calls.append((local, repo))
 
         monkeypatch.setattr("src.sync_modes.copy.merge_conflicting_file", fake_merge)
@@ -557,7 +557,7 @@ class TestSyncFile:
         local.write_text("# Local version")
         repo = claude_env["repo"] / "claude" / "global" / "CLAUDE.md"
         repo.write_text("# Repo version (different)")
-        isolated_sync_state.set_hash(str(repo.relative_to(claude_env["repo"])), "# Base version")
+        isolated_sync_state.set_synced(str(repo.relative_to(claude_env["repo"])), "# Base version")
 
         target.mode.sync_file(local, repo, label="test file")
 
@@ -570,7 +570,8 @@ class TestSyncFile:
         """copy mode: identical files get a stored version, so a later repo-only edit is copied, not merged."""
         merge_calls: list[tuple[Path, Path]] = []
         monkeypatch.setattr(
-            "src.sync_modes.copy.merge_conflicting_file", lambda local, repo: merge_calls.append((local, repo))
+            "src.sync_modes.copy.merge_conflicting_file",
+            lambda local, repo, base_text: merge_calls.append((local, repo)),
         )
         monkeypatch.setattr("src.targets.claude_code.load_project_mappings", lambda **kw: {})
         target = make_copy_target(claude_env)
@@ -597,7 +598,7 @@ class TestSyncDir:
         """copy mode: files that differ between local and repo trigger merge."""
         merge_calls: list[tuple[Path, Path]] = []
 
-        def fake_merge(local: Path, repo: Path) -> None:
+        def fake_merge(local: Path, repo: Path, base_text: str) -> None:
             merge_calls.append((local, repo))
 
         monkeypatch.setattr("src.sync_modes.copy.merge_conflicting_file", fake_merge)
@@ -615,7 +616,7 @@ class TestSyncDir:
         memory_dir = project_dir / "memory"
         memory_dir.mkdir(parents=True)
         (memory_dir / "notes.md").write_text("# Local version (different)")
-        isolated_sync_state.set_hash(str((canonical_dir / "notes.md").relative_to(claude_env["repo"])), "# Base version")
+        isolated_sync_state.set_synced(str((canonical_dir / "notes.md").relative_to(claude_env["repo"])), "# Base version")
 
         monkeypatch.setattr(
             "src.targets.claude_code.load_project_mappings", lambda **kw: mapping

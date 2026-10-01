@@ -62,21 +62,19 @@ Watch out: two machines each adding a line at the **end** of `MEMORY.md` is the 
 Flow now:
 
 1. `git pull --rebase` stops on the conflict.
-2. `resolve_conflicts` replaces git's markers with Mesy's `<!-- CONFLICT -->` markers, adds `conflict: true`, runs `git add`.
+2. `resolve_conflicts` leaves git's markers as they are and runs `git add`.
 3. `git rebase --continue` tries to open a text editor for the commit message. The service has no terminal and no `EDITOR`, so it fails (tested). The rebase stays stopped halfway, the repo is not on a branch, and the push is rejected.
 4. What happens next depends on which comes first:
 
 | Next event | Result |
 |------------|--------|
 | Interval pull | `rebase --continue` fails again, so `rebase --abort` throws the resolution away. The pull after that hits the same conflict. Repeats (tested) |
-| A Mesy commit (new local edit, or watchdog seeing the rewritten conflict file) | `git commit -m` needs no editor and finishes the rebase; push works (tested) |
+| A Mesy commit (new local edit, or watchdog seeing the conflict file git wrote) | `git commit -m` needs no editor and finishes the rebase; push works (tested) |
 
 With quiet time ≥ pull interval (AlfredMemory: 600/600) the pull comes first, so the loop repeats until a local edit happens to land during a stopped phase. DMNotes (90/180) finishes on its own.
 
 Not handled:
 - The editor problem above. Setting `GIT_EDITOR=true` for Mesy's git calls fixes it (tested: the rebase then finishes in one pass).
-- Conflict labels are swapped (Bugs #3). Confirmed again in the test: the remote text is labeled "local".
-- No `conflict: true` for files without frontmatter (Bugs #4).
 
 ## 6. One machine deleted a file, the other edited it
 
@@ -153,7 +151,7 @@ Not handled:
 
 Handled (`setup.py`):
 - Empty folder: clone. Folder with files: `git init`, fetch, `git pull --allow-unrelated-histories`, set upstream.
-- Local memory is moved into the repo and linked. Files that differ from the repo copy are conflict-merged (both versions kept). The daemon's `first_sync` commits and pushes the result.
+- Local memory is moved into the repo and linked. Files that differ from the repo copy are merged with no base, so every differing block is marked. The daemon's `first_sync` commits and pushes the result.
 - Unmapped projects are listed in `claude/projects/.pending`.
 
 Mismatch: `.pending` is in AlfredMemory's `.gitignore`, so each machine keeps its own. [FunctionalSpec.md §8](FunctionalSpec.md) says it is committed and shared. Keep it ignored: `add_pending` rewrites its `discovered:` time on every scan, so if it were tracked it would block pulls the same way as scenario 12.
@@ -163,7 +161,7 @@ Mismatch: `.pending` is in AlfredMemory's `.gitignore`, so each machine keeps it
 Flow differences from symlink mode:
 - The tool folder is not watched. An edit there reaches the repo at the next scan, then waits the quiet time before the commit.
 - Received changes reach the tool folder at the next scan on the receiving machine.
-- Both sides changed on this machine between two scans: merged, both versions kept, before git is involved. Handled.
+- Both sides changed on this machine between two scans: merged against the last synced text before git is involved; only overlapping lines are marked. Handled.
 
 Not handled:
 - Deletes never spread (scenario 7).

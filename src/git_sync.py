@@ -5,7 +5,6 @@ import socket
 import subprocess
 from pathlib import Path
 
-from src.conflict import conflict_marker, flag_conflict
 from src.timestamp import now_iso
 
 GIT_TIMEOUT_SECONDS = 30
@@ -87,7 +86,7 @@ def _commit_message(repo_base: Path) -> str:
 
 
 def resolve_conflicts(repo_base: Path) -> None:
-    """Handle rebase conflicts by keeping both versions."""
+    """Handle rebase conflicts by committing git's conflict markers for a person to resolve."""
     result = git("diff", "--name-only", "--diff-filter=U", repo_base=repo_base)
     if not result.stdout.strip():
         continue_result = git("rebase", "--continue", repo_base=repo_base)
@@ -106,32 +105,10 @@ def _resolve_file(repo_base: Path, filepath: str) -> None:
     if not full_path.exists():
         return
 
-    content = full_path.read_text()
-    if "<<<<<<<" not in content:
+    if "<<<<<<<" not in full_path.read_text():
         return
 
-    full_path.write_text(flag_conflict(_replace_markers(content)))
     git("add", filepath, repo_base=repo_base)
-
-
-def _replace_markers(content: str) -> str:
-    hostname = socket.gethostname()
-    now = now_iso()
-    resolved = []
-    in_conflict = False
-
-    for line in content.split("\n"):
-        if line.startswith("<<<<<<<"):
-            in_conflict = True
-            resolved.append(conflict_marker(now, f"local ({hostname})"))
-        elif line.startswith("=======") and in_conflict:
-            resolved.append(f"\n{conflict_marker(now, 'remote')}")
-        elif line.startswith(">>>>>>>") and in_conflict:
-            in_conflict = False
-        else:
-            resolved.append(line)
-
-    return "\n".join(resolved)
 
 
 def pull_remote(repo_base: Path) -> None:

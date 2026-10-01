@@ -1,64 +1,40 @@
-"""Conflict format: keep both versions of a file, with markers and a ``conflict: true`` flag."""
+"""Conflict merge: combine two versions of a file with ``git merge-file``, marking only overlapping edits."""
 
 import logging
 import socket
+import tempfile
 from pathlib import Path
 
-from src.timestamp import now_iso
+from src.git_sync import git
 
+MERGE_FILE_MAX_CONFLICTS = 127
 log = logging.getLogger("mesy")
 
 
-def split_frontmatter(text: str) -> tuple[str, dict]:
-    """Split markdown into (body, frontmatter_dict)."""
-    if not text.startswith("---\n"):
-        return text, {}
+def merge_conflicting_file(local: Path, repo: Path, base_text: str = "") -> None:
+    """Merge local and repo against base_text and write the result to both.
 
-    parts = text.split("---\n", 2)
-    if len(parts) < 3:
-        return text, {}
+    Edits that don't overlap are combined; overlapping ones get git's conflict markers.
+    An empty base_text (no last synced version) marks every block that differs.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir) / "base"
+        base.write_text(base_text)
+        result = git(
+            "merge-file", "-p",
+            "-L", f"local ({socket.gethostname()})", "-L", "base", "-L", "repo",
+            str(local), str(base), str(repo),
+            repo_base=repo.parent,
+        )
 
-    frontmatter = {}
-    for line in parts[1].strip().split("\n"):
-        if ": " in line:
-            key, val = line.split(": ", 1)
-            frontmatter[key.strip()] = val.strip()
+    # git exits with the number of conflicts (at most 127), or a negative number on error.
+    if result.returncode > MERGE_FILE_MAX_CONFLICTS:
+        raise RuntimeError(f"git merge-file failed for {repo}: {result.stderr.strip()}")
 
-    return parts[2], frontmatter
+    repo.write_text(result.stdout)
+    local.write_text(result.stdout)
 
-
-def conflict_marker(now: str, side: str) -> str:
-    return f"<!-- CONFLICT ({now}): {side} version -->"
-
-
-def flag_conflict(text: str) -> str:
-    """Add ``conflict: true`` to the frontmatter, creating the frontmatter when there is none."""
-    parts = text.split("---\n", 2)
-    if text.startswith("---\n") and len(parts) == 3:
-        return f"---\nconflict: true\n{parts[1]}---\n{parts[2]}"
-
-    return f"---\nconflict: true\n---\n\n{text}"
-
-
-def merge_conflicting_file(local: Path, repo: Path) -> None:
-    """Merge two differing files by keeping both versions with conflict markers."""
-    hostname = socket.gethostname()
-    now = now_iso()
-
-    local_body, local_frontmatter = split_frontmatter(local.read_text())
-    repo_body, repo_frontmatter = split_frontmatter(repo.read_text())
-
-    merged_frontmatter = {**repo_frontmatter, **local_frontmatter}
-    frontmatter_lines = "".join(f"{k}: {v}\n" for k, v in merged_frontmatter.items() if k != "conflict")
-
-    merged = flag_conflict(
-        f"---\n{frontmatter_lines}---\n\n"
-        f"{conflict_marker(now, f'local ({hostname})')}\n"
-        f"{local_body.strip()}\n\n"
-        f"{conflict_marker(now, 'repo')}\n"
-        f"{repo_body.strip()}\n"
-    )
-
-    repo.write_text(merged)
-    local.write_text(merged)
-    log.info("Conflict-merged %s (both versions preserved)", repo.name)
+    if result.returncode == 0:
+        log.info("Merged %s (edits did not overlap)", repo.name)
+    else:
+        log.info("Conflict in %s: %d block(s) marked for manual resolution", repo.name, result.returncode)

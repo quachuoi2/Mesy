@@ -21,14 +21,14 @@ One person with several devices (Linux, Windows, WSL, dual-boot) who owns a priv
 
 - One shared memory per project across all devices.
 - Runs in the background and starts at login.
-- Never loses content: when both sides changed, both versions are kept.
+- Never loses content: edits that don't overlap are merged, overlapping ones are both kept and marked.
 - Works offline; catches up when the network returns.
 - Several data repositories per device (for example personal memory and team notes).
 
 ## Non-goals
 
 - Real-time sync. Changes wait for a quiet period (default 30 s).
-- Line-by-line merging. Conflicts are flagged for a person to resolve.
+- Resolving overlapping edits. They are marked for a person to resolve.
 - Syncing anything other than memory files. Only `.md` changes start a sync.
 - A server or API. GitHub is the only shared store.
 
@@ -45,7 +45,7 @@ One person with several devices (Linux, Windows, WSL, dual-boot) who owns a priv
 - Maps each device's Claude Code project name to one shared name (`projects.ini`).
 - Lists unmapped projects in a shared `.pending` file with a ready-to-paste snippet.
 - Two sync modes: symbolic links into the repo, or two-way copies for tools that cannot follow links.
-- Marks conflicted files with `conflict: true` so they are easy to find.
+- Marks conflicts with git's own markers, so editors like VS Code offer one-click resolution.
 - Interactive setup: registers repos, clones them, moves existing memory in, installs the background service.
 
 ## Constraints

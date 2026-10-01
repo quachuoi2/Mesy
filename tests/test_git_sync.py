@@ -14,7 +14,7 @@ from src.git_sync import (
     pull_remote,
     resolve_conflicts,
 )
-from src.conflict import merge_conflicting_file, split_frontmatter
+from src.conflict import merge_conflicting_file
 
 
 class TestGitHelper:
@@ -207,17 +207,20 @@ class TestResolveConflicts:
         subcommands = [c[3:] for c in commands if c[0] == "git"]
         assert ["rebase", "--abort"] in subcommands
 
-    def test_resolves_conflict_markers_and_adds_frontmatter(self, tmp_repo, monkeypatch):
-        """resolve_conflicts() rewrites conflict markers and adds conflict:true frontmatter."""
+    def test_keeps_git_markers_and_stages_file(self, tmp_repo, monkeypatch):
+        """resolve_conflicts() leaves git's conflict markers as they are and runs git add."""
         conflicted_file = tmp_repo / "claude" / "global" / "memory.md"
-        conflicted_file.write_text(
+        conflicted = (
             "---\ntitle: test\n---\n"
-            "<<<<<<< HEAD\nlocal content\n"
-            "=======\nremote content\n"
+            "<<<<<<< HEAD\nremote content\n"
+            "=======\nlocal content\n"
             ">>>>>>> abc123\n"
         )
+        conflicted_file.write_text(conflicted)
+        commands = []
 
         def fake_run(cmd, **kw):
+            commands.append(cmd)
             if "diff" in cmd and "--diff-filter=U" in cmd:
                 return subprocess.CompletedProcess(cmd, 0, "claude/global/memory.md", "")
             return subprocess.CompletedProcess(cmd, 0, "", "")
@@ -226,27 +229,8 @@ class TestResolveConflicts:
 
         resolve_conflicts(repo_base=tmp_repo)
 
-        content = conflicted_file.read_text()
-        assert "<<<<<<<" not in content
-        assert "local content" in content
-        assert "remote content" in content
-        assert "conflict: true" in content
-
-    def test_adds_frontmatter_when_file_has_none(self, tmp_repo, monkeypatch):
-        """resolve_conflicts() flags a conflicted file that had no frontmatter, like CLAUDE.md."""
-        conflicted_file = tmp_repo / "claude" / "global" / "CLAUDE.md"
-        conflicted_file.write_text("<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> abc\n")
-
-        def fake_run(cmd, **kw):
-            if "diff" in cmd and "--diff-filter=U" in cmd:
-                return subprocess.CompletedProcess(cmd, 0, "claude/global/CLAUDE.md", "")
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-
-        monkeypatch.setattr("subprocess.run", fake_run)
-
-        resolve_conflicts(repo_base=tmp_repo)
-
-        assert conflicted_file.read_text().startswith("---\nconflict: true\n---\n")
+        assert conflicted_file.read_text() == conflicted
+        assert ["add", "claude/global/memory.md"] in [c[3:] for c in commands]
 
     def test_calls_rebase_continue_after_resolution(self, tmp_repo, monkeypatch):
         """resolve_conflicts() calls rebase --continue after resolving files."""
@@ -319,68 +303,70 @@ class TestPullRemote:
 
         pull_remote(repo_base=tmp_repo)
 
-        assert "<<<<<<<" not in conflicted_file.read_text()
+        assert "<<<<<<<" in conflicted_file.read_text()
         assert ["rebase", "--continue"] in [c[3:] for c in commands]
 
 
-class TestSplitFrontmatter:
-    def test_parses_frontmatter(self):
-        """split_frontmatter() extracts key:value pairs from YAML header."""
-        text = "---\ntitle: hello\nconflict: true\n---\nbody text\n"
+BASE_DESCRIPTION = "Commit messages are imperative, one line per change"
 
-        body, frontmatter = split_frontmatter(text)
-        assert frontmatter["title"] == "hello"
-        assert frontmatter["conflict"] == "true"
-        assert "body text" in body
 
-    def test_no_frontmatter(self):
-        """split_frontmatter() returns empty dict when there's no --- header."""
-        text = "Just some plain text.\nNo frontmatter here.\n"
-
-        body, frontmatter = split_frontmatter(text)
-        assert frontmatter == {}
-        assert body == text
-
-    def test_incomplete_frontmatter(self):
-        """split_frontmatter() handles malformed frontmatter gracefully."""
-        text = "---\njust one delimiter\n"
-
-        body, frontmatter = split_frontmatter(text)
-        assert frontmatter == {}
-        assert body == text
+def memory_file(description: str, extra_body: str = "") -> str:
+    return (
+        "---\nname: commit-style\n"
+        f"description: {description}\n"
+        "metadata:\n  type: feedback\n---\n\n"
+        "Never add Co-Authored-By lines.\n"
+        f"{extra_body}"
+    )
 
 
 class TestMergeConflictingFile:
-    def test_merges_both_versions(self, tmp_path):
-        """merge_conflicting_file() writes both local and repo versions with markers."""
+    """Real `git merge-file` runs here: it only reads and writes files, never touches a repo."""
+
+    def test_merges_edits_that_do_not_overlap(self, tmp_path):
+        """Repo changed the description, local added a body line: both kept, no markers."""
         local = tmp_path / "local.md"
         repo = tmp_path / "repo.md"
-        local.write_text("# Local\nThis is the local version.\n")
-        repo.write_text("# Repo\nThis is the repo version.\n")
+        local.write_text(memory_file(BASE_DESCRIPTION, "Short notes preferred.\n"))
+        repo.write_text(memory_file("Commit messages: imperative subject, no attribution"))
+
+        merge_conflicting_file(local=local, repo=repo, base_text=memory_file(BASE_DESCRIPTION))
+
+        assert repo.read_text() == memory_file(
+            "Commit messages: imperative subject, no attribution", "Short notes preferred.\n"
+        )
+
+    def test_marks_only_overlapping_lines(self, tmp_path):
+        """Both sides changed the description: only that line is marked, nested frontmatter stays intact."""
+        local = tmp_path / "local.md"
+        repo = tmp_path / "repo.md"
+        local.write_text(memory_file("Commit messages: imperative, short notes"))
+        repo.write_text(memory_file("Commit messages: imperative subject, no attribution"))
+
+        merge_conflicting_file(local=local, repo=repo, base_text=memory_file(BASE_DESCRIPTION))
+
+        result = repo.read_text()
+        assert result.count("<<<<<<<") == 1
+        assert (
+            "description: Commit messages: imperative, short notes\n"
+            "=======\n"
+            "description: Commit messages: imperative subject, no attribution\n"
+            ">>>>>>> repo\n"
+            "metadata:\n  type: feedback\n"
+        ) in result
+
+    def test_empty_base_marks_every_difference(self, tmp_path):
+        """No last synced version: differing lines are marked, shared lines appear once."""
+        local = tmp_path / "local.md"
+        repo = tmp_path / "repo.md"
+        local.write_text("# Notes\nlocal line\n")
+        repo.write_text("# Notes\nrepo line\n")
 
         merge_conflicting_file(local=local, repo=repo)
 
         result = repo.read_text()
-        assert "local version" in result
-        assert "repo version" in result
-        assert "CONFLICT" in result
-        assert "conflict: true" in result
-
-    def test_merges_frontmatter(self, tmp_path):
-        """merge_conflicting_file() merges frontmatter from both files."""
-        local = tmp_path / "local.md"
-        repo = tmp_path / "repo.md"
-        local.write_text("---\nauthor: local\n---\nlocal body\n")
-        repo.write_text("---\nauthor: repo\ndate: 2024\n---\nrepo body\n")
-
-        merge_conflicting_file(local=local, repo=repo)
-
-        result = repo.read_text()
-        assert "conflict: true" in result
-        # local frontmatter wins for shared keys
-        assert "author: local" in result
-        # repo-only key is preserved
-        assert "date: 2024" in result
+        assert result.count("# Notes") == 1
+        assert "local line\n=======\nrepo line\n>>>>>>> repo\n" in result
 
     def test_local_and_repo_identical_after_merge(self, tmp_path):
         """merge_conflicting_file() writes identical content to both local and repo.
@@ -397,6 +383,18 @@ class TestMergeConflictingFile:
         merge_conflicting_file(local=local, repo=repo)
 
         assert local.read_text() == repo.read_text()
+
+    def test_raises_when_git_cannot_merge(self, tmp_path):
+        """A binary file makes git merge-file fail; the files are left untouched."""
+        local = tmp_path / "local.bin"
+        repo = tmp_path / "repo.bin"
+        local.write_bytes(b"a\0b")
+        repo.write_bytes(b"c\0d")
+
+        with pytest.raises(RuntimeError, match="merge-file failed"):
+            merge_conflicting_file(local=local, repo=repo)
+
+        assert repo.read_bytes() == b"c\0d"
 
 
 class TestCurrentBranch:

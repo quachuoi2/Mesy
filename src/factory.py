@@ -23,6 +23,7 @@ from src.targets.codex import CodexTarget
 from src.targets.generic import GenericTarget
 
 HASH_FILE_NAME = ".mesy_sync_hashes.json"
+TEXT_FILE_NAME = "mesy_sync_texts.json"
 
 
 @dataclass
@@ -81,7 +82,11 @@ _TARGET_CLASSES = {
 def build_modes(repo_base: Path) -> dict[str, SyncMode]:
     """One object per mode for the whole repo: copy-mode targets must share one SyncState,
     or each overwrites the others' hashes in the shared hash file."""
-    sync_state = SyncState(hash_file_path=repo_base / HASH_FILE_NAME)
+    sync_state = SyncState(
+        hash_file_path=repo_base / HASH_FILE_NAME,
+        # Inside .git/ so git never commits it, without a .gitignore line in every data repo.
+        text_file_path=repo_base / ".git" / TEXT_FILE_NAME,
+    )
     return {"symlink": SymlinkMode(), "copy": CopyMode(sync_state, repo_base)}
 
 

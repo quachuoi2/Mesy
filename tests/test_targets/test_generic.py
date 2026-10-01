@@ -272,8 +272,8 @@ class TestAdoptDirectoryCopy:
         """copy mode: both-sides-changed triggers merge_conflicting_file (real conflict)."""
         merge_calls = []
 
-        def fake_merge(local, repo):
-            merge_calls.append((local, repo))
+        def fake_merge(local, repo, base_text):
+            merge_calls.append((local, repo, base_text))
             # Simulate what merge_conflicting_file does: write merged content to both
             merged = "<!-- merged -->"
             repo.write_text(merged)
@@ -289,7 +289,7 @@ class TestAdoptDirectoryCopy:
         src_file.write_text(base_content)
         repo_file.write_text(base_content)
         key = str(repo_file.relative_to(generic_env["tmp_repo"]))
-        isolated_sync_state.set_hash(key, base_content)
+        isolated_sync_state.set_synced(key, base_content)
 
         # Now both sides diverge independently
         src_file.write_text("# Source changed")
@@ -298,9 +298,7 @@ class TestAdoptDirectoryCopy:
         target = make_target(generic_env, sync_mode="copy")
         target.setup()
 
-        assert len(merge_calls) == 1
-        assert merge_calls[0][0] == src_file
-        assert merge_calls[0][1] == repo_file
+        assert merge_calls == [(src_file, repo_file, base_content)]
 
 
 class TestThreeWaySync:
@@ -315,7 +313,7 @@ class TestThreeWaySync:
         src_file.write_text(base)
         repo_file.write_text(base)
         key = str(repo_file.relative_to(generic_env["tmp_repo"]))
-        isolated_sync_state.set_hash(key, base)
+        isolated_sync_state.set_synced(key, base)
 
         src_file.write_text("# Source updated")
 
@@ -334,7 +332,7 @@ class TestThreeWaySync:
         src_file.write_text(base)
         repo_file.write_text(base)
         key = str(repo_file.relative_to(generic_env["tmp_repo"]))
-        isolated_sync_state.set_hash(key, base)
+        isolated_sync_state.set_synced(key, base)
 
         repo_file.write_text("# Repo updated")
 
@@ -349,7 +347,7 @@ class TestThreeWaySync:
         merge_calls = []
         monkeypatch.setattr(
             "src.sync_modes.copy.merge_conflicting_file",
-            lambda local, repo: merge_calls.append((local, repo)),
+            lambda local, repo, base_text: merge_calls.append((local, repo)),
         )
 
         content = "# Same content"
@@ -358,7 +356,7 @@ class TestThreeWaySync:
         src_file.write_text(content)
         repo_file.write_text(content)
         key = str(repo_file.relative_to(generic_env["tmp_repo"]))
-        isolated_sync_state.set_hash(key, content)
+        isolated_sync_state.set_synced(key, content)
 
         target = make_target(generic_env, sync_mode="copy")
         target.setup()
@@ -371,7 +369,7 @@ class TestThreeWaySync:
         merge_calls = []
         monkeypatch.setattr(
             "src.sync_modes.copy.merge_conflicting_file",
-            lambda local, repo: merge_calls.append((local, repo)),
+            lambda local, repo, base_text: merge_calls.append((local, repo)),
         )
 
         src_file = generic_env["src"] / "notes.md"

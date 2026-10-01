@@ -1,4 +1,4 @@
-"""Tests for src/sync_state.py — hash storage, compute, save/load."""
+"""Tests for src/sync_state.py — hash and text storage, compute, save/load."""
 
 from __future__ import annotations
 
@@ -13,7 +13,14 @@ from src.sync_state import SyncState
 @pytest.fixture
 def state(tmp_path) -> SyncState:
     """Fresh SyncState backed by a temp file."""
-    return SyncState(hash_file_path=tmp_path / ".mesy_sync_hashes.json")
+    return make_state(tmp_path)
+
+
+def make_state(tmp_path: Path) -> SyncState:
+    return SyncState(
+        hash_file_path=tmp_path / ".mesy_sync_hashes.json",
+        text_file_path=tmp_path / "mesy_sync_texts.json",
+    )
 
 
 class TestComputeHash:
@@ -34,53 +41,63 @@ class TestGetSetHash:
         assert state.get_hash("no/such/file.md") is None
 
     def test_set_then_get_returns_hash(self, state):
-        state.set_hash("a/b.md", "content")
+        state.set_synced("a/b.md", "content")
 
         expected = state.compute_hash("content")
         assert state.get_hash("a/b.md") == expected
 
     def test_overwrite_updates_hash(self, state):
-        state.set_hash("a/b.md", "v1")
-        state.set_hash("a/b.md", "v2")
+        state.set_synced("a/b.md", "v1")
+        state.set_synced("a/b.md", "v2")
 
         assert state.get_hash("a/b.md") == state.compute_hash("v2")
+
+
+class TestGetText:
+    def test_unknown_key_returns_empty_text(self, state):
+        assert state.get_text("no/such/file.md") == ""
+
+    def test_set_synced_stores_text(self, state):
+        state.set_synced("a/b.md", "v1")
+        state.set_synced("a/b.md", "v2")
+
+        assert state.get_text("a/b.md") == "v2"
 
 
 class TestPersistence:
     def test_save_creates_file(self, tmp_path):
         path = tmp_path / ".mesy_sync_hashes.json"
-        s = SyncState(hash_file_path=path)
+        s = make_state(tmp_path)
 
-        s.set_hash("x.md", "hello")
+        s.set_synced("x.md", "hello")
 
         assert path.exists()
 
     def test_load_restores_state(self, tmp_path):
-        path = tmp_path / ".mesy_sync_hashes.json"
-        s1 = SyncState(hash_file_path=path)
-        s1.set_hash("docs/notes.md", "some content")
+        s1 = make_state(tmp_path)
+        s1.set_synced("docs/notes.md", "some content")
 
-        s2 = SyncState(hash_file_path=path)
+        s2 = make_state(tmp_path)
         assert s2.get_hash("docs/notes.md") == s1.compute_hash("some content")
+        assert s2.get_text("docs/notes.md") == "some content"
 
     def test_corrupt_file_starts_empty(self, tmp_path):
         path = tmp_path / ".mesy_sync_hashes.json"
         path.write_text("not valid json")
 
-        s = SyncState(hash_file_path=path)
+        s = make_state(tmp_path)
         assert s.get_hash("anything") is None
 
     def test_missing_file_starts_empty(self, tmp_path):
-        path = tmp_path / "does_not_exist.json"
-
-        s = SyncState(hash_file_path=path)
+        s = make_state(tmp_path)
         assert s.get_hash("x") is None
 
-    def test_set_hash_calls_save(self, tmp_path):
+    def test_set_synced_writes_both_files(self, tmp_path):
         path = tmp_path / ".mesy_sync_hashes.json"
-        s = SyncState(hash_file_path=path)
+        s = make_state(tmp_path)
 
-        s.set_hash("a.md", "content")
+        s.set_synced("a.md", "content")
 
         raw = json.loads(path.read_text())
         assert "a.md" in raw
+        assert json.loads((tmp_path / "mesy_sync_texts.json").read_text()) == {"a.md": "content"}
