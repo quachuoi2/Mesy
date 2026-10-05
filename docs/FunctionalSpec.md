@@ -21,7 +21,7 @@ As of 2026-10-01 (branch `main`). Product context: [ProductSpec.md](ProductSpec.
 
 ```ini
 [repo:alfred-memory]
-path = ~/Workspace/AlfredMemory
+path = ~/Workspace/AI/Memory/AlfredMemory
 ```
 
 `sync.ini` `[mesy]` — each value must be a finite number above 0.

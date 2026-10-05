@@ -1,5 +1,5 @@
 [repo:alfred-memory]
-path = /home/Workspace/AlfredMemory
+path = /home/Workspace/AI/Memory/AlfredMemory
 
 [repo:notes]
 path = /home/Notes

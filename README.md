@@ -11,10 +11,10 @@ Device A                          GitHub (private)            Device B
 ~/.claude/projects/ ──symlink──┐                        ┌──symlink── ~/.claude/projects/
 ~/.openclaw/workspace/ ─copy──┐│                        │┌──copy──── ~/.openclaw/workspace/
                               vv                        vv
-                      ~/Workspace/AlfredMemory <──push/pull──> ~/Workspace/AlfredMemory
+            ~/Workspace/AI/Memory/AlfredMemory <──push/pull──> ~/Workspace/AI/Memory/AlfredMemory
                                     ^
                                     │ managed by
-                              ~/Workspace/Mesy (this repo)
+                              ~/Workspace/AI/Memory/Mesy (this repo)
 ```
 
 ## Layout
@@ -51,8 +51,8 @@ AlfredMemory/
 1. Create a private GitHub repo for your memory (the data repo).
 2. Clone Mesy and run setup:
    ```bash
-   git clone git@github.com:<you>/Mesy.git ~/Workspace/Mesy
-   cd ~/Workspace/Mesy
+   git clone git@github.com:<you>/Mesy.git ~/Workspace/AI/Memory/Mesy
+   cd ~/Workspace/AI/Memory/Mesy
    python3 setup.py
    ```
 
@@ -72,7 +72,7 @@ Daemon exits if this is missing or empty.
 
 ```ini
 [repo:alfred-memory]
-path = /home/you/Workspace/AlfredMemory
+path = /home/you/Workspace/AI/Memory/AlfredMemory
 
 [repo:dmserver-notes]
 path = /home/you/Workspace/Note/DMServer
